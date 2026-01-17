@@ -1,55 +1,63 @@
-#include<iostream>
-#include<limits> // Required for input validation
+#include <iostream>
+#include <winsock2.h> // The Windows Networking Library
+#include <limits> 
+
 using namespace std;
 
+// We need to link the library for the compiler (Visual Studio comment)
+// #pragma comment(lib, "ws2_32.lib")
+
 int main() {
+    // 1. Initialize Winsock (The Network Engine)
+    WSADATA wsaData;
+    int wsaErr;
+    
+    // MAKE THE REQUEST: "Hey Windows, give me version 2.2 of Winsock"
+    wsaErr = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    if (wsaErr != 0) {
+        cout << ">> [FATAL] Winsock failed to start. Error Code: " << wsaErr << endl;
+        return 1; // Stop the program if networking fails
+    }
+    
+    cout << ">> [NET] Winsock DLL Found!" << endl;
+    cout << ">> [NET] Status: " << wsaData.szSystemStatus << endl;
+
     // Core System State
     bool systemOnline = true;
     int userChoice;
 
-    // System Initialization Sequence
     cout << "=== HASSAN SYSTEMS | TERMINAL V1 ===" << endl;
-
-    // Simulate boot sequence latency
-    for (int i = 0; i <= 100; i = i + 10) {
-        cout << "[BOOT] Loading Core Modules... " << i << "%" << endl;
-    }
     cout << "[OK] System Ready.\n" << endl;
 
-    // Main Event Loop (Server Heartbeat)
+    // Main Event Loop
     while (systemOnline) {
-        cout << "\n-----------------------------" << endl;
-        cout << "1. Initialize Connections" << endl;
-        cout << "2. System Status" << endl;
-        cout << "3. Terminate Process" << endl;
-        cout << "root@hassan:~# ";
+        cout << "\nroot@hassan:~# ";
 
-        // Input Validation (Protects against non-integer crashes)
+        // Input Validation
         if (!(cin >> userChoice)) {
-            cin.clear(); // Clear error flag
-            cin.ignore(numeric_limits<streamsize>::max(), '\n'); // Discard bad input
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
             continue; 
         }
 
-        // Command Dispatcher
         switch (userChoice) {
             case 1:
-                // Pending: Socket implementation (Winsock)
-                cout << ">> [NET] Listening on Port 8080..." << endl;
+                cout << ">> [NET] Server Socket initialization pending..." << endl;
                 break;
-
             case 2:
-                cout << ">> [SYS] RAM: 14MB | CPU: OK" << endl;
+                cout << ">> [SYS] RAM: 14MB | Network: ACTIVE" << endl;
                 break;
-
             case 3:
                 cout << ">> [STOP] Shutting down engine." << endl;
                 systemOnline = false;
                 break;
-
             default:
                 cout << ">> [ERR] Invalid Command." << endl;
         }
     }
+
+    // CLEANUP: Turn off Winsock when done
+    WSACleanup();
     return 0;
 }

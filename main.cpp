@@ -1,11 +1,8 @@
 #include <iostream>
-#include <winsock2.h> // The Windows Networking Library
+#include <winsock2.h>
 #include <limits> 
 
 using namespace std;
-
-// We need to link the library for the compiler (Visual Studio comment)
-// #pragma comment(lib, "ws2_32.lib")
 
 int main() {
     // 1. Initialize Winsock (The Network Engine)
@@ -17,11 +14,27 @@ int main() {
 
     if (wsaErr != 0) {
         cout << ">> [FATAL] Winsock failed to start. Error Code: " << wsaErr << endl;
-        return 1; // Stop the program if networking fails
+        return 1;
     }
     
     cout << ">> [NET] Winsock DLL Found!" << endl;
     cout << ">> [NET] Status: " << wsaData.szSystemStatus << endl;
+
+    // ==========================================
+    // DAY 5: CREATE THE SOCKET (The Phone)
+    // ==========================================
+    // AF_INET      = IPv4 (Internet Address)
+    // SOCK_STREAM  = TCP (Reliable Connection)
+    SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    if (serverSocket == INVALID_SOCKET) {
+        cout << ">> [FATAL] Error creating socket: " << WSAGetLastError() << endl;
+        WSACleanup();
+        return 1;
+    }
+
+    cout << ">> [NET] Server Socket Created! ID: " << serverSocket << endl;
+    // ==========================================
 
     // Core System State
     bool systemOnline = true;
@@ -34,7 +47,6 @@ int main() {
     while (systemOnline) {
         cout << "\nroot@hassan:~# ";
 
-        // Input Validation
         if (!(cin >> userChoice)) {
             cin.clear();
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
@@ -43,7 +55,8 @@ int main() {
 
         switch (userChoice) {
             case 1:
-                cout << ">> [NET] Server Socket initialization pending..." << endl;
+                // We update this line to show the real socket ID
+                cout << ">> [NET] Socket Active. ID: " << serverSocket << endl;
                 break;
             case 2:
                 cout << ">> [SYS] RAM: 14MB | Network: ACTIVE" << endl;
@@ -57,7 +70,8 @@ int main() {
         }
     }
 
-    // CLEANUP: Turn off Winsock when done
-    WSACleanup();
+    // CLEANUP
+    closesocket(serverSocket); // Close the socket first
+    WSACleanup();              // Then turn off the driver
     return 0;
 }

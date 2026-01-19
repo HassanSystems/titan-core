@@ -5,48 +5,54 @@
 using namespace std;
 
 int main() {
-    // 1. Initialize Winsock (The Network Engine)
+    // 1. Initialize Winsock
     WSADATA wsaData;
-    int wsaErr;
-    
-    // MAKE THE REQUEST: "Hey Windows, give me version 2.2 of Winsock"
-    wsaErr = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    int wsaErr = WSAStartup(MAKEWORD(2, 2), &wsaData);
 
     if (wsaErr != 0) {
-        cout << ">> [FATAL] Winsock failed to start. Error Code: " << wsaErr << endl;
+        cout << ">> [FATAL] Winsock failed: " << wsaErr << endl;
         return 1;
     }
-    
     cout << ">> [NET] Winsock DLL Found!" << endl;
-    cout << ">> [NET] Status: " << wsaData.szSystemStatus << endl;
 
-    // ==========================================
-    // DAY 5: CREATE THE SOCKET (The Phone)
-    // ==========================================
-    // AF_INET      = IPv4 (Internet Address)
-    // SOCK_STREAM  = TCP (Reliable Connection)
+    // 2. Create Socket
     SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
     if (serverSocket == INVALID_SOCKET) {
-        cout << ">> [FATAL] Error creating socket: " << WSAGetLastError() << endl;
+        cout << ">> [FATAL] Socket failed: " << WSAGetLastError() << endl;
         WSACleanup();
         return 1;
     }
-
     cout << ">> [NET] Server Socket Created! ID: " << serverSocket << endl;
+
+    // ==========================================
+    // DAY 6: BIND THE PORT (The Phone Number)
+    // ==========================================
+    sockaddr_in service;
+    service.sin_family = AF_INET;           // IPv4
+    service.sin_addr.s_addr = INADDR_ANY;   // Listen on ALL network cards
+    service.sin_port = htons(8080);         // Port 8080
+
+    if (bind(serverSocket, (SOCKADDR*)&service, sizeof(service)) == SOCKET_ERROR) {
+        cout << ">> [FATAL] Bind failed: " << WSAGetLastError() << endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+    
+    cout << ">> [NET] Socket Bound to Port 8080." << endl;
     // ==========================================
 
-    // Core System State
+    // System Loop
     bool systemOnline = true;
     int userChoice;
 
-    cout << "=== HASSAN SYSTEMS | TERMINAL V1 ===" << endl;
+    cout << "=== TITAN CORE | SYSTEM V1 ===" << endl;
     cout << "[OK] System Ready.\n" << endl;
 
-    // Main Event Loop
     while (systemOnline) {
-        cout << "\nroot@hassan:~# ";
-
+        // CHANGED: Professional Prompt
+        cout << "\nroot@titan-core:~# ";
+        
         if (!(cin >> userChoice)) {
             cin.clear();
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
@@ -55,14 +61,13 @@ int main() {
 
         switch (userChoice) {
             case 1:
-                // We update this line to show the real socket ID
-                cout << ">> [NET] Socket Active. ID: " << serverSocket << endl;
+                cout << ">> [NET] Listening on Port 8080..." << endl;
                 break;
             case 2:
-                cout << ">> [SYS] RAM: 14MB | Network: ACTIVE" << endl;
+                cout << ">> [SYS] RAM: 14MB | Network: BOUND (8080)" << endl;
                 break;
             case 3:
-                cout << ">> [STOP] Shutting down engine." << endl;
+                cout << ">> [STOP] System Halt." << endl;
                 systemOnline = false;
                 break;
             default:
@@ -70,8 +75,7 @@ int main() {
         }
     }
 
-    // CLEANUP
-    closesocket(serverSocket); // Close the socket first
-    WSACleanup();              // Then turn off the driver
+    closesocket(serverSocket);
+    WSACleanup();
     return 0;
 }

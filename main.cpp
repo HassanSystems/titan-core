@@ -24,13 +24,11 @@ int main() {
     }
     cout << ">> [NET] Server Socket Created! ID: " << serverSocket << endl;
 
-    // ==========================================
-    // DAY 6: BIND THE PORT (The Phone Number)
-    // ==========================================
+    // 3. Bind (Day 6)
     sockaddr_in service;
-    service.sin_family = AF_INET;           // IPv4
-    service.sin_addr.s_addr = INADDR_ANY;   // Listen on ALL network cards
-    service.sin_port = htons(8080);         // Port 8080
+    service.sin_family = AF_INET;
+    service.sin_addr.s_addr = INADDR_ANY;
+    service.sin_port = htons(8080);
 
     if (bind(serverSocket, (SOCKADDR*)&service, sizeof(service)) == SOCKET_ERROR) {
         cout << ">> [FATAL] Bind failed: " << WSAGetLastError() << endl;
@@ -38,8 +36,20 @@ int main() {
         WSACleanup();
         return 1;
     }
-    
     cout << ">> [NET] Socket Bound to Port 8080." << endl;
+    
+    // ==========================================
+    // DAY 7: LISTEN (The Ringer)
+    // ==========================================
+    // SOMAXCONN = Maximum queue length for pending connections
+    if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
+        cout << ">> [FATAL] Listen failed: " << WSAGetLastError() << endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+    
+    cout << ">> [NET] Server is now LISTENING on Port 8080..." << endl;
     // ==========================================
 
     // System Loop
@@ -50,7 +60,6 @@ int main() {
     cout << "[OK] System Ready.\n" << endl;
 
     while (systemOnline) {
-        // CHANGED: Professional Prompt
         cout << "\nroot@titan-core:~# ";
         
         if (!(cin >> userChoice)) {
@@ -61,10 +70,11 @@ int main() {
 
         switch (userChoice) {
             case 1:
-                cout << ">> [NET] Listening on Port 8080..." << endl;
+                // Real status check
+                cout << ">> [NET] STATE: LISTENING | PORT: 8080" << endl;
                 break;
             case 2:
-                cout << ">> [SYS] RAM: 14MB | Network: BOUND (8080)" << endl;
+                cout << ">> [SYS] RAM: 14MB | Socket: " << serverSocket << endl;
                 break;
             case 3:
                 cout << ">> [STOP] System Halt." << endl;

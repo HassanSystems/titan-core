@@ -48,10 +48,11 @@ int main() {
     bool systemOnline = true;
     int userChoice;
     
-    // Day 8 Variables
+    // DAY 9 VARIABLES
     SOCKET clientSocket;
     sockaddr_in clientAddr;
     int clientAddrSize = sizeof(clientAddr);
+    char buffer[4096]; // The Bucket: Holds up to 4096 characters of text
 
     cout << "=== TITAN CORE | SYSTEM V1 ===" << endl;
     cout << ">> [NET] LISTENING on Port 8080..." << endl;
@@ -68,19 +69,31 @@ int main() {
 
         switch (userChoice) {
             case 1:
-                // DAY 8: ACCEPT CONNECTION
                 cout << ">> [NET] Waiting for client connection..." << endl;
                 
-                // This line PAUSES the program until a client connects
+                // 1. Accept the call
                 clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
                 
                 if (clientSocket == INVALID_SOCKET) {
                     cout << ">> [ERR] Accept failed: " << WSAGetLastError() << endl;
                 } else {
                     cout << ">> [SUCCESS] CLIENT CONNECTED!" << endl;
-                    cout << ">> [INFO] Client Socket ID: " << clientSocket << endl;
                     
-                    // Close the client socket immediately for now (we just wanted to say hello)
+                    // 2. DAY 9: RECEIVE DATA
+                    // Clear the buffer (clean the bucket)
+                    memset(buffer, 0, 4096);
+                    
+                    // Receive data from client
+                    int bytesReceived = recv(clientSocket, buffer, 4096, 0);
+                    
+                    if (bytesReceived > 0) {
+                        cout << ">> [DATA] INCOMING PACKET DETECTED (" << bytesReceived << " bytes)" << endl;
+                        cout << "-----------------------------------" << endl;
+                        cout << buffer << endl; // PRINT THE BROWSER'S REQUEST
+                        cout << "-----------------------------------" << endl;
+                    }
+
+                    // 3. Close connection
                     closesocket(clientSocket);
                     cout << ">> [NET] Connection closed." << endl;
                 }

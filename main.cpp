@@ -48,11 +48,11 @@ int main() {
     bool systemOnline = true;
     int userChoice;
     
-    // DAY 9 VARIABLES
+    // VARIABLES
     SOCKET clientSocket;
     sockaddr_in clientAddr;
     int clientAddrSize = sizeof(clientAddr);
-    char buffer[4096]; // The Bucket: Holds up to 4096 characters of text
+    char buffer[4096]; 
 
     cout << "=== TITAN CORE | SYSTEM V1 ===" << endl;
     cout << ">> [NET] LISTENING on Port 8080..." << endl;
@@ -71,7 +71,7 @@ int main() {
             case 1:
                 cout << ">> [NET] Waiting for client connection..." << endl;
                 
-                // 1. Accept the call
+                // 1. ACCEPT
                 clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
                 
                 if (clientSocket == INVALID_SOCKET) {
@@ -79,21 +79,39 @@ int main() {
                 } else {
                     cout << ">> [SUCCESS] CLIENT CONNECTED!" << endl;
                     
-                    // 2. DAY 9: RECEIVE DATA
-                    // Clear the buffer (clean the bucket)
+                    // 2. RECEIVE
                     memset(buffer, 0, 4096);
-                    
-                    // Receive data from client
                     int bytesReceived = recv(clientSocket, buffer, 4096, 0);
                     
                     if (bytesReceived > 0) {
-                        cout << ">> [DATA] INCOMING PACKET DETECTED (" << bytesReceived << " bytes)" << endl;
-                        cout << "-----------------------------------" << endl;
-                        cout << buffer << endl; // PRINT THE BROWSER'S REQUEST
-                        cout << "-----------------------------------" << endl;
+                        cout << ">> [DATA] Packet Captured (" << bytesReceived << " bytes)" << endl;
+                        // We comment out the huge print block to keep the terminal clean today
+                        // cout << buffer << endl; 
+
+                        // 3. DAY 10: SEND RESPONSE
+                        // Construct a valid HTTP Packet
+                        string httpResponse = 
+                            "HTTP/1.1 200 OK\r\n"
+                            "Content-Type: text/html\r\n"
+                            "Connection: close\r\n\r\n"
+                            "<html>"
+                            "<body style='background-color:black; color:lime; font-family:monospace;'>"
+                            "<h1>TITAN CORE SYSTEM: ONLINE</h1>"
+                            "<p>Connection Established.</p>"
+                            "<p>Server Time: Day 10</p>"
+                            "</body></html>";
+
+                        // Send the packet
+                        int bytesSent = send(clientSocket, httpResponse.c_str(), httpResponse.length(), 0);
+
+                        if (bytesSent == SOCKET_ERROR) {
+                            cout << ">> [ERR] Send failed." << endl;
+                        } else {
+                            cout << ">> [TX] RESPONSE SENT TO BROWSER." << endl;
+                        }
                     }
 
-                    // 3. Close connection
+                    // 4. CLOSE
                     closesocket(clientSocket);
                     cout << ">> [NET] Connection closed." << endl;
                 }

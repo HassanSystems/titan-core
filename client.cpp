@@ -7,62 +7,44 @@
 using namespace std;
 
 int main() {
-    // 1. Initialize Winsock
     WSADATA wsaData;
-    int wsaErr = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (wsaErr != 0) {
-        cout << ">> [FATAL] Client Winsock Failed." << endl;
-        return 1;
-    }
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-    // 2. Create Socket
     SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (clientSocket == INVALID_SOCKET) {
-        cout << ">> [FATAL] Client Socket Failed." << endl;
-        WSACleanup();
-        return 1;
-    }
-
-    // 3. Connect to Server (Localhost:8080)
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Connect to SELF
-    serverAddr.sin_port = htons(8080); // Port 8080
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    serverAddr.sin_port = htons(8080);
 
     cout << ">> [CLIENT] Connecting to Titan Core..." << endl;
-
     if (connect(clientSocket, (SOCKADDR*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        cout << ">> [FATAL] Connection Failed. Is the Server running?" << endl;
-        closesocket(clientSocket);
-        WSACleanup();
+        cout << ">> [FATAL] Server offline." << endl;
         return 1;
     }
+    cout << ">> [SUCCESS] Connected! Type your messages below.\n" << endl;
 
-    cout << ">> [SUCCESS] Connected to Server!" << endl;
+    // INFINITE LOOP: Keep chatting until you type "exit"
+    string message;
+    char buffer[4096];
 
-    // 4. Send Data
-    string message = "Titan Client Handshake: v1.0";
-    send(clientSocket, message.c_str(), message.length(), 0);
-    cout << ">> [TX] Sent: " << message << endl;
+    while (true) {
+        cout << "> ";
+        getline(cin, message); // Allow spaces in text
 
-    // 5. Receive Response
-    char buffer[4096] = {0};
-    int bytesReceived = recv(clientSocket, buffer, 4096, 0);
-    
-    if (bytesReceived > 0) {
-        cout << ">> [RX] Server Replied: \n" << endl;
-        cout << "----------------------------------" << endl;
-        cout << buffer << endl; // Print what the server sent back
-        cout << "----------------------------------" << endl;
+        if (message == "exit") break;
+
+        // Send
+        send(clientSocket, message.c_str(), message.length(), 0);
+
+        // Receive Echo
+        memset(buffer, 0, 4096);
+        int bytesReceived = recv(clientSocket, buffer, 4096, 0);
+        if (bytesReceived > 0) {
+            cout << "[SERVER]: " << buffer << endl;
+        }
     }
 
-    // 6. Close
     closesocket(clientSocket);
     WSACleanup();
-    cout << "\n>> [CLIENT] Session Ended." << endl;
-
-    // Pause so you can see the output
-    int pause;
-    cin >> pause; 
     return 0;
 }

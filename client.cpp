@@ -21,26 +21,32 @@ int main() {
         cout << ">> [FATAL] Server offline." << endl;
         return 1;
     }
-    cout << ">> [SUCCESS] Connected! Type your messages below.\n" << endl;
+    cout << ">> [SUCCESS] Connected!" << endl;
 
-    // INFINITE LOOP: Keep chatting until you type "exit"
+    // STEP 1: SEND IDENTITY
+    string name;
+    cout << ">> Enter your Username: ";
+    getline(cin, name);
+    send(clientSocket, name.c_str(), name.length(), 0); // Send Name First
+
+    cout << ">> [INFO] Welcome, " << name << ". You can now chat.\n" << endl;
+
+    // STEP 2: CHAT LOOP
     string message;
     char buffer[4096];
 
     while (true) {
         cout << "> ";
-        getline(cin, message); // Allow spaces in text
+        getline(cin, message);
 
         if (message == "exit") break;
 
-        // Send
         send(clientSocket, message.c_str(), message.length(), 0);
 
-        // Receive Echo
         memset(buffer, 0, 4096);
         int bytesReceived = recv(clientSocket, buffer, 4096, 0);
         if (bytesReceived > 0) {
-            cout << "[SERVER]: " << buffer << endl;
+            cout << buffer << endl;
         }
     }
 

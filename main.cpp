@@ -1,30 +1,61 @@
 #include <iostream>
 #include <winsock2.h>
-#include <thread> // NEW: For handling multiple clients
+#include <thread>
 #include <vector>
+#include <map>
+#include <mutex>
 
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
-// This function runs on a separate thread for EACH client
+// GLOBAL REGISTRY
+// Stores: Socket ID -> "Username"
+map<SOCKET, string> client_map;
+mutex map_lock; // The "Lock" to protect the map
+
 void ClientHandler(SOCKET clientSocket) {
     char buffer[4096];
-    
+
+    // STEP 1: HANDSHAKE (Get Name)
+    memset(buffer, 0, 4096);
+    int bytesReceived = recv(clientSocket, buffer, 4096, 0);
+    string username = "";
+
+    if (bytesReceived > 0) {
+        username = string(buffer, bytesReceived);
+
+        // LOCK THE MAP (Stop others from touching it)
+        map_lock.lock();
+        client_map[clientSocket] = username;
+        map_lock.unlock(); // UNLOCK (Safe to resume)
+
+        cout << ">> [CONN] " << username << " has joined the server!" << endl;
+    }
+
+    // STEP 2: CHAT LOOP
     while (true) {
         memset(buffer, 0, 4096);
-        int bytesReceived = recv(clientSocket, buffer, 4096, 0);
+        int bytes = recv(clientSocket, buffer, 4096, 0);
 
-        if (bytesReceived <= 0) {
-            cout << ">> [NET] Client disconnected." << endl;
+        if (bytes <= 0) {
+            // LOCK & REMOVE USER
+            map_lock.lock();
+            if (client_map.count(clientSocket)) {
+                cout << ">> [DISC] " << client_map[clientSocket] << " disconnected." << endl;
+                client_map.erase(clientSocket);
+            }
+            map_lock.unlock();
             break;
         }
 
-        string msg(buffer, bytesReceived);
-        cout << ">> [MSG] Received: " << msg << endl;
+        string msg(buffer, bytes);
+        
+        // Server now knows WHO said it
+        cout << ">> [" << username << "]: " << msg << endl;
 
-        // Echo back to client
-        string response = "Titan Echo: " + msg;
+        // Echo back (Simple confirmation)
+        string response = "[SERVER]: Message received, " + username;
         send(clientSocket, response.c_str(), response.length(), 0);
     }
 
@@ -44,23 +75,19 @@ int main() {
     bind(serverSocket, (SOCKADDR*)&service, sizeof(service));
     listen(serverSocket, SOMAXCONN);
 
-    cout << "=== TITAN CORE | MULTI-THREADED SYSTEM ===" << endl;
-    cout << ">> [NET] Listening for connections..." << endl;
+    cout << "=== TITAN CORE | IDENTITY SYSTEM ONLINE ===" << endl;
+    cout << ">> [NET] Waiting for users..." << endl;
 
     while (true) {
-        // Main thread only does one thing: ACCEPT new people
         SOCKET clientSocket = accept(serverSocket, NULL, NULL);
-        
         if (clientSocket != INVALID_SOCKET) {
-            cout << ">> [NEW] Client Connected! Spawning thread..." << endl;
-            
-            // Create a new thread for this user
+            // New connection? Spawn a thread to handle the handshake.
             thread t(ClientHandler, clientSocket);
-            t.detach(); // Let the thread run independently
+            t.detach();
         }
     }
 
     closesocket(serverSocket);
     WSACleanup();
     return 0;
-}
+ }

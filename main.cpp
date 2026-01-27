@@ -4,33 +4,43 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <sstream> // NEW: For splitting strings
 
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
-// GLOBAL REGISTRY
-// Stores: Socket ID -> "Username"
+// =============================================================
+// LOCKING STRATEGY (Architecture Advice by Y. Fuchs)
+// =============================================================
+// This mutex protects the 'client_map' from Race Conditions.
+//
+// SCENARIO: 
+// If Client A connects (Write) at the exact same time Client B 
+// disconnects (Delete), the Server will crash without this lock.
+//
+// RULES:
+// 1. MUST lock before writing to client_map (New Connection).
+// 2. MUST lock before deleting from client_map (Disconnect).
+// 3. MUST lock before iterating to find a user (Private Message).
+// =============================================================
 map<SOCKET, string> client_map;
-mutex map_lock; // The "Lock" to protect the map
+mutex map_lock;
 
 void ClientHandler(SOCKET clientSocket) {
     char buffer[4096];
 
-    // STEP 1: HANDSHAKE (Get Name)
+    // STEP 1: HANDSHAKE
     memset(buffer, 0, 4096);
     int bytesReceived = recv(clientSocket, buffer, 4096, 0);
     string username = "";
 
     if (bytesReceived > 0) {
         username = string(buffer, bytesReceived);
-
-        // LOCK THE MAP (Stop others from touching it)
         map_lock.lock();
         client_map[clientSocket] = username;
-        map_lock.unlock(); // UNLOCK (Safe to resume)
-
-        cout << ">> [CONN] " << username << " has joined the server!" << endl;
+        map_lock.unlock();
+        cout << ">> [CONN] " << username << " has joined!" << endl;
     }
 
     // STEP 2: CHAT LOOP
@@ -39,7 +49,6 @@ void ClientHandler(SOCKET clientSocket) {
         int bytes = recv(clientSocket, buffer, 4096, 0);
 
         if (bytes <= 0) {
-            // LOCK & REMOVE USER
             map_lock.lock();
             if (client_map.count(clientSocket)) {
                 cout << ">> [DISC] " << client_map[clientSocket] << " disconnected." << endl;
@@ -51,12 +60,51 @@ void ClientHandler(SOCKET clientSocket) {
 
         string msg(buffer, bytes);
         
-        // Server now knows WHO said it
-        cout << ">> [" << username << "]: " << msg << endl;
+        // === PRIVATE MESSAGING LOGIC ===
+        if (msg[0] == '@') {
+            // Format: "@Bob Hello secret friend"
+            size_t spacePos = msg.find(' ');
+            if (spacePos != string::npos) {
+                string targetName = msg.substr(1, spacePos - 1); // Extract "Bob"
+                string privateMsg = msg.substr(spacePos + 1);    // Extract "Hello secret friend"
 
-        // Echo back (Simple confirmation)
-        string response = "[SERVER]: Message received, " + username;
-        send(clientSocket, response.c_str(), response.length(), 0);
+                bool found = false;
+                
+                map_lock.lock(); // LOCK while searching
+                for (auto const& [sock, name] : client_map) {
+                    if (name == targetName) {
+                        string packet = "[Private from " + username + "]: " + privateMsg;
+                        send(sock, packet.c_str(), packet.length(), 0);
+                        found = true;
+                        break;
+                    }
+                }
+                map_lock.unlock(); // UNLOCK
+
+                // Feedback to Sender
+                if (found) {
+                    string confirm = "[Sent Private]: " + privateMsg;
+                    send(clientSocket, confirm.c_str(), confirm.length(), 0);
+                    cout << ">> [WHISPER] " << username << " -> " << targetName << endl;
+                } else {
+                    string error = "[ERROR] User '" + targetName + "' not found.";
+                    send(clientSocket, error.c_str(), error.length(), 0);
+                }
+            }
+        } 
+        // === PUBLIC BROADCAST LOGIC ===
+        else {
+            cout << ">> [" << username << "]: " << msg << endl; // Log to server
+            
+            map_lock.lock();
+            for (auto const& [sock, name] : client_map) {
+                if (sock != clientSocket) { // Don't echo to self
+                    string packet = "[" + username + "]: " + msg;
+                    send(sock, packet.c_str(), packet.length(), 0);
+                }
+            }
+            map_lock.unlock();
+        }
     }
 
     closesocket(clientSocket);
@@ -75,13 +123,11 @@ int main() {
     bind(serverSocket, (SOCKADDR*)&service, sizeof(service));
     listen(serverSocket, SOMAXCONN);
 
-    cout << "=== TITAN CORE | IDENTITY SYSTEM ONLINE ===" << endl;
-    cout << ">> [NET] Waiting for users..." << endl;
-
+    cout << "=== TITAN CORE | PRIVATE MESSAGING ONLINE ===" << endl;
+    
     while (true) {
         SOCKET clientSocket = accept(serverSocket, NULL, NULL);
         if (clientSocket != INVALID_SOCKET) {
-            // New connection? Spawn a thread to handle the handshake.
             thread t(ClientHandler, clientSocket);
             t.detach();
         }
@@ -90,4 +136,4 @@ int main() {
     closesocket(serverSocket);
     WSACleanup();
     return 0;
- }
+}

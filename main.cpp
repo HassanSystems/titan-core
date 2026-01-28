@@ -5,6 +5,7 @@
 #include <map>
 #include <mutex>
 #include <sstream> // NEW: For splitting strings
+#include <fstream> // NEW: For File Handling (Added Day 15)
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -26,6 +27,18 @@ using namespace std;
 // =============================================================
 map<SOCKET, string> client_map;
 mutex map_lock;
+
+// === LOGGER MODULE (Added Day 15) ===
+// Writes every message to a text file with a timestamp
+void LogMessage(string message) {
+    ofstream logFile;
+    // app = APPEND mode (don't delete old logs, just add to the bottom)
+    logFile.open("titan_logs.txt", ios::app); 
+    if (logFile.is_open()) {
+        logFile << message << endl;
+        logFile.close();
+    }
+}
 
 void ClientHandler(SOCKET clientSocket) {
     char buffer[4096];
@@ -86,6 +99,9 @@ void ClientHandler(SOCKET clientSocket) {
                     string confirm = "[Sent Private]: " + privateMsg;
                     send(clientSocket, confirm.c_str(), confirm.length(), 0);
                     cout << ">> [WHISPER] " << username << " -> " << targetName << endl;
+
+                    // NEW: Save Private Message to File
+                    LogMessage("[PRIVATE] " + username + " -> " + targetName + ": " + privateMsg);
                 } else {
                     string error = "[ERROR] User '" + targetName + "' not found.";
                     send(clientSocket, error.c_str(), error.length(), 0);
@@ -96,6 +112,9 @@ void ClientHandler(SOCKET clientSocket) {
         else {
             cout << ">> [" << username << "]: " << msg << endl; // Log to server
             
+            // NEW: Save Public Message to File
+            LogMessage("[PUBLIC] " + username + ": " + msg);
+
             map_lock.lock();
             for (auto const& [sock, name] : client_map) {
                 if (sock != clientSocket) { // Don't echo to self

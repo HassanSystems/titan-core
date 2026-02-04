@@ -1,3 +1,9 @@
 USER: My name is Hassan.
 USER: What is my naem?
 TITAN: Hassan, your name is Hassan. You previously asked me to tell you what was your name, and I'm happy to inform you again that it's indeed Hassan. How can I assist you further today?
+USER: what is date and time now?
+TITAN: [Time: 06:52 PM] [Date: 2026-02-04]
+
+The current time is 06:52 PM, and the current date is February 4th, 2026. Your battery level is at 45%. How can I assist you further today?
+USER: what is time and date this time and battery condition?
+TITAN: [Time: 06:57 PM] [Date: 2026-02-04] [Battery: 42%]

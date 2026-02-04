@@ -1,6 +1,6 @@
 # 🧠 Titan Core (C++)
 
-> **Build Status:** Day 20 (Agentic Control Active) 🟢
+> **Build Status:** Day 22 (Sensors & Time Active) 🟢
 > **Engine:** C++ | Llama 3.2 | Windows API
 
 ## 🚀 What is Titan?
@@ -10,7 +10,8 @@ Unlike Python wrappers, Titan runs directly on the metal. It listens, speaks, an
 ## ⚡ Key Features
 - **The Brain:** Integrated local inference via Llama 3.2 (Ollama).
 - **The Voice:** Real-time Text-to-Speech injection (System.Speech).
-- **The Hands:** Executive OS control (Titan can open apps, manage files, and execute shell commands).
+- **The Hands:** Executive OS control (Titan can open apps).
+- **The Senses:** Aware of Time, Date, and Battery Level (C++ System Sensors).
 - **Zero Dependencies:** No cloud APIs. 100% Offline.
 
 ## 🛠️ Installation

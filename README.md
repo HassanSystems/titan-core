@@ -1,24 +1,46 @@
-# 🧠 Titan Core (C++)
+# Titan Core (v7) 🏗️👁️
 
-> **Build Status:** Day 24 (The Architect / Python Bridge) 🟢
-> **Engine:** C++ (Core) | Llama 3.2 (Brain) | Python (Tools)
+**Titan is a C++ based AI Agent powered by Llama 3.2.**
+It is designed to be a self-extending system that can see, speak, and build its own tools.
 
-## 🚀 What is Titan?
-Titan is a high-performance, local AI assistant built from scratch in C++.
-Unlike standard chatbots, Titan is an **Agent**. It runs on the metal, controls the Operating System, manages files, and **writes its own code** to solve complex problems.
+## 🚀 Current Capabilities (Day 25)
 
-## ⚡ Key Features
-- **The Brain:** Integrated local inference via Llama 3.2 (Ollama).
-- **The Voice:** Real-time Text-to-Speech injection (System.Speech).
-- **The Hands:** Executive OS control (Titan can open apps).
-- **The Senses:** Aware of Time, Date, and Battery Level.
-- **The Scribe:** Can Read and Write files to the local disk.
-- **The Architect:** Generates and executes Python scripts for data visualization and math.
-- **Privacy:** 100% Offline. No data leaves your machine.
+### 1. **Vision System (New)** 👁️
+Titan can now "see" images.
+* **Pipeline:** C++ -> Python (Pillow) -> Tesseract OCR -> C++ Memory.
+* **Sanitization:** Automatically cleans and converts images (BMP) to bypass format errors.
+* **Usage:** Just say *"Read the text in test.png"*
 
-## 🛠️ Installation
-1. Install [Ollama](https://ollama.com/) & Pull Llama 3.2.
-2. Install Python (Ensure "Add to PATH" is checked).
-3. Clone the repo:
-   ```bash
-   git clone [https://github.com/HassanSystems/titan-core.git](https://github.com/HassanSystems/titan-core.git)
+### 2. **The Python Bridge (The Architect)** 🏗️
+Titan can write its own Python scripts to solve problems it cannot do in C++.
+* Example: *"Draw a graph of linear regression"* -> Titan writes `graph.py`, executes it, and presents the image.
+
+### 3. **Core Systems** 🧠
+* **Brain:** Llama 3.2 (via Ollama API).
+* **Voice:** Windows TTS (Powershell injection).
+* **Memory:** Short-term conversational context (`titan_memory.txt`).
+* **Filesystem:** Can read/write files and execute system commands.
+
+## 🛠️ Tech Stack
+* **Language:** C++ (Standard 17)
+* **AI Backend:** Ollama (Llama 3.2)
+* **Vision:** Tesseract OCR + Python Pillow
+* **Communication:** HTTP (REST API)
+
+## 📦 How to Run
+1.  **Install Prerequisites:**
+    * Ollama (running `llama3.2`)
+    * g++ Compiler
+    * Tesseract OCR
+    * Python 3.x (`pip install pytesseract pillow`)
+2.  **Compile:**
+    ```bash
+    g++ titan_v7.cpp -o titan_v7.exe -lws2_32 -std=c++17 -D_WIN32_WINNT=0x0A00
+    ```
+3.  **Run:**
+    ```bash
+    ./titan_v7.exe
+    ```
+
+---
+*Built publicly by @Hassan_Builds. Day 25.*

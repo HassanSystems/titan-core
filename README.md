@@ -1,25 +1,24 @@
-# Titan Core (v8) 🏗️👁️🖥️
+# Titan Core (v9) 🏗️👁️🖐️
 
 **Titan is a C++ based AI Agent powered by Llama 3.2.**
-It is designed to be a self-extending system that can see, speak, and build its own tools.
+It is designed to be a self-extending system that can see, speak, touch, and build its own tools.
 
-## 🚀 Current Capabilities (Day 26)
+## 🚀 Current Capabilities (Day 27)
 
-### 1. **The Watcher (Screen Awareness)** 👁️
-Titan can now see your desktop screen.
-* **Mechanism:** Auto-generates a Python script using `pyautogui` to capture the screen, then feeds the image to the Vision System.
-* **Usage:** Just say *"Look at my screen"* or *"WATCH"*.
-* **Result:** Titan reads the active window, error messages, or websites visible on your monitor.
+### 1. **The Hands (Motor Control)** 🖐️
+Titan can physically control the Mouse and Keyboard using the Win32 API.
+* **Mechanism:** Direct Hardware Injection (`SendInput`).
+* **Usage:** *"Type 'Hello World'"* or *"Click 500, 500"*.
+* **Result:** Titan takes control of the cursor and types ghost text into any active window (Notepad, VS Code, Browser).
 
-### 2. **Vision System** 📷
-Titan can "see" image files.
-* **Pipeline:** C++ -> Python (Pillow) -> Tesseract OCR -> C++ Memory.
-* **Sanitization:** Automatically cleans and converts images (BMP) to bypass format errors.
-* **Usage:** *"Read the text in test.png"*
+### 2. **The Watcher (Screen Awareness)** 👁️
+Titan can see your desktop screen.
+* **Mechanism:** Auto-generates a Python script to capture the screen -> OCR -> Text Analysis.
+* **Usage:** *"Look at my screen"*.
 
 ### 3. **The Python Bridge (The Architect)** 🏗️
-Titan can write its own Python scripts to solve problems it cannot do in C++.
-* Example: *"Draw a graph of linear regression"* -> Titan writes `graph.py`, executes it, and presents the image.
+Titan can write its own Python scripts to solve complex problems.
+* **Usage:** *"Draw a graph of linear regression"*.
 
 ### 4. **Core Systems** 🧠
 * **Brain:** Llama 3.2 (via Ollama API).
@@ -29,24 +28,23 @@ Titan can write its own Python scripts to solve problems it cannot do in C++.
 ## 🛠️ Tech Stack
 * **Language:** C++ (Standard 17)
 * **AI Backend:** Ollama (Llama 3.2)
-* **Vision:** Tesseract OCR + Python Pillow + PyAutoGUI
+* **OS Integration:** Win32 API (User32, Kernel32)
+* **Vision:** Tesseract OCR + Python Pillow
 * **Communication:** HTTP (REST API)
 
 ## 📦 How to Run
 1.  **Install Prerequisites:**
     * Ollama (running `llama3.2`)
     * g++ Compiler
-    * Tesseract OCR
-    * Python 3.x
-    * **Libraries:** `pip install pytesseract pillow pyautogui`
+    * Python 3.x (`pip install pyautogui pillow pytesseract`)
 2.  **Compile:**
     ```bash
-    g++ titan_v8.cpp -o titan_v8.exe -lws2_32 -std=c++17 -D_WIN32_WINNT=0x0A00
+    g++ titan_v9.cpp -o titan_v9.exe -lws2_32 -std=c++17 -D_WIN32_WINNT=0x0A00
     ```
 3.  **Run:**
     ```bash
-    ./titan_v8.exe
+    ./titan_v9.exe
     ```
 
 ---
-*Built publicly by @Hassan_Builds. Day 26.*
+*Built publicly by @Hassan_Builds. Day 27.*

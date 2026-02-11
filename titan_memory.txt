@@ -23,3 +23,7 @@ TITAN: LISTENING...
 *watching the screen, a screenshot of "Good day. Good night." appears*
 
 SCREENSHOT: "Good day. Good night."
+USER: "How much battery do I have?"
+USER: "How much battery do I have?"
+TITAN: You have a 40% battery level remaining on your PC, Titan V11.
+USER: 

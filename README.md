@@ -1,50 +1,41 @@
-# Titan Core (v9) 🏗️👁️🖐️
+# Titan V12: The Hardware-Integrated AI Agent 🛡️🔋
 
 **Titan is a C++ based AI Agent powered by Llama 3.2.**
-It is designed to be a self-extending system that can see, speak, touch, and build its own tools.
+Unlike standard chatbots, Titan has "Hands" (mouse/keyboard), "Ears" (Whisper), "Eyes" (Tesseract OCR), and a **Safety Core** that prevents dangerous actions.
 
-## 🚀 Current Capabilities (Day 27)
+## 🚀 New in V12 (The Safety Update)
 
-### 1. **The Hands (Motor Control)** 🖐️
-Titan can physically control the Mouse and Keyboard using the Win32 API.
-* **Mechanism:** Direct Hardware Injection (`SendInput`).
-* **Usage:** *"Type 'Hello World'"* or *"Click 500, 500"*.
-* **Result:** Titan takes control of the cursor and types ghost text into any active window (Notepad, VS Code, Browser).
+### 1. **The Safety Core (Firewall)** 🛡️
+Titan now includes a middleware layer that filters every AI command before execution.
+* **Blacklist:** Automatically blocks dangerous commands like `shutdown`, `rm`, `del`, or `format`.
+* **Bounds Checking:** Prevents mouse clicks outside the visible screen area.
+* **Audit Logging:** Every physical action is recorded in `titan_actions.log` for transparency.
 
-### 2. **The Watcher (Screen Awareness)** 👁️
-Titan can see your desktop screen.
-* **Mechanism:** Auto-generates a Python script to capture the screen -> OCR -> Text Analysis.
-* **Usage:** *"Look at my screen"*.
+### 2. **Hardware Control (The Body)** 🔋
+Titan interacts directly with the PC hardware via Windows API.
+* **Battery Awareness:** "What is my battery level?" -> Reads system power status.
+* **Volume Control:** "Mute volume" / "Volume Up" -> Controls system audio.
+* **Security:** "Lock the PC" -> Instantly locks the workstation.
 
-### 3. **The Python Bridge (The Architect)** 🏗️
-Titan can write its own Python scripts to solve complex problems.
-* **Usage:** *"Draw a graph of linear regression"*.
-
-### 4. **Core Systems** 🧠
-* **Brain:** Llama 3.2 (via Ollama API).
-* **Voice:** Windows TTS (Powershell injection).
-* **Memory:** Short-term conversational context (`titan_memory.txt`).
+### 3. **Robust Architecture** 🏗️
+* **Crash Prevention:** Added `try/catch` blocks to handle AI hallucinations without crashing.
+* **Unicode Support:** Fixed typing engine to support symbols and capitalization.
 
 ## 🛠️ Tech Stack
-* **Language:** C++ (Standard 17)
+* **Core:** C++ (Standard 17)
 * **AI Backend:** Ollama (Llama 3.2)
-* **OS Integration:** Win32 API (User32, Kernel32)
-* **Vision:** Tesseract OCR + Python Pillow
-* **Communication:** HTTP (REST API)
+* **Hearing:** Python + OpenAI Whisper (Base Model)
+* **Vision:** Tesseract OCR + Python
+* **OS Integration:** Win32 API (User32, Kernel32, PowerProf)
 
 ## 📦 How to Run
-1.  **Install Prerequisites:**
-    * Ollama (running `llama3.2`)
-    * g++ Compiler
-    * Python 3.x (`pip install pyautogui pillow pytesseract`)
-2.  **Compile:**
-    ```bash
-    g++ titan_v9.cpp -o titan_v9.exe -lws2_32 -std=c++17 -D_WIN32_WINNT=0x0A00
-    ```
-3.  **Run:**
-    ```bash
-    ./titan_v9.exe
-    ```
 
----
-*Built publicly by @Hassan_Builds. Day 27.*
+### 1. Prerequisites
+* [Ollama](https://ollama.ai/) (Model: `llama3.2`)
+* G++ Compiler (MinGW)
+* Python 3.x (`pip install pyautogui sounddevice scipy openai-whisper`)
+* Tesseract OCR (Default Path: `C:\Program Files\Tesseract-OCR`)
+
+### 2. Compile
+```bash
+g++ titan_v12.cpp -o titan_v12.exe -lws2_32 -std=c++17 -D_WIN32_WINNT=0x0A00

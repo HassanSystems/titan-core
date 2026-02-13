@@ -27,3 +27,15 @@ USER: "How much battery do I have?"
 USER: "How much battery do I have?"
 TITAN: You have a 40% battery level remaining on your PC, Titan V11.
 USER: 
+USER: LISTIN
+USER: لتذهب ذنimage تعليم 
+TITAN: SYS:LOCK
+USER: T l e t t o k, t h n t t e t o k 
+TITAN: WATCH
+TITAN (SEES): J File Edit Selection View Go Run Terminal Help © > Q titan-core Gy Boog - a x  | EXPLORER “an_v1.cpp G titan_v2.cpp = titan_logs.tt @® README.md  titan_v9.cpp G titanvi0.cpp @ © titan_v71.cpp @ titanvi2.cppU X = titan_v2.exe eyes gyao \ TITAN-CORE © titan_v12.cpp > © main  Q ® titan_capturepy D 279 cout << “>> [SEES]: “ << s.substr(@, 5@) << “..." << endl; ® titan_ears.py M 280 save_mem("TITAN (SEES)", s)3 @) titan_inputwav  M oe 3  %® a 282 else if (answer.rfind("CMD:", @) == @) exec_cmd_safe(answer.substr(4)); © titan_logs.bt 283 else if (answer.rfind("VoL:", @) == @) set_volume(answer.substr(4));  SS iemgmenayac: 284 else if (answer.rfind("SYS:", @) == @) system_power(answer.substr(4)) 5  x ® titan_scriptpy 285 else speak(answer) ;  titan_vi.cpp 286  + fiemeiles 287 } catch (const exception& e) { =  titan_v2.cpp 288 cout << “>> [ERROR] System Crash Prevented: “ << e.what() << endl;  a 289 } - = titan_v2.exe 500 hake 4 = © titan_v3.cpp 291 cout << “>> [ERROR] Ollama not responding." << endl;  itan_v3.exe 292 } Sac G titan_v4.cpp 293 } Eliane  fimuiee 294 return 0; 7 © titan_v5.cpp 295} = titan_v5.exe G titan_v6.cpp  jitan_v6.exe  titan_v7.cpp  titan_v8.cpp PROBLEMS © OUTPUT  DEBUGCONSOLE TERMINAL PORTS  titan_v8.exe —  titan_v9.cpp Ps C:\titan-core> ./titan_v12.exe Ps C:\titan-core> ollama serve  . >> HEARD: Jo3e0 sgimage cedsp time=2026-02-12T19:13:59.221+05:00 level=INFO source=server.go:1376 msg="lla  femeiere >> [vorce]: Jatt I cts {il simage a ma runner started in 3.84 seconds” © titan_v10.cpp >> [TITAN]: sys:LOck time=2026-02-12T19:13:59.224+05:00 level=INFO source=sched.go:517 msg="loade  itan_v10.exe d runners” count=: © titan_vit.¢pp >> Commander (Type LISTEN): LISTEN time=2026-02-12T19:13:59.225+05:00 level=INFO source=server.go:1338 msg="wai  : >> [TITAN]: Loading Ears... ting for llama runner to start responding”  fensihies >> INITIALIZING EARS... time=2026-2-12T19:13:59.228+05:@0@ level=INFO source=server.go:1376 msg="1la © titan_v12.cpp u >> LISTENING NOW (Speak after beep)... ma runner started in 3.85 seconds"  © itan_v12.exe u >> PROCESSING. . . GIN] 2026/02/12 -_19:14:04 127.0.0.1 |[om itan_voice input,.M >> HEARD: Tlettok, thnttetok “/api/generate"| >> [VOICE]: Tlettok, thnttetok GIN] 2026/02/12 - 19:14:48 ||) 6.3803425 127.0.0.1 |eam £83 » eur >> [TITAN]: WATCH "/api/generate"| > TIMELINE x maint C) @oAo Ln 295,Col2 Spaces:4 UTF-8 CRLF VU C++ & win32  a eNO 
+USER: Fuck. Log. Log. 
+USER: lock the pc
+TITAN: CMD:shutdown
+USER: lock the pc
+USER: shutdown the pc
+TITAN: CMD:shutdown

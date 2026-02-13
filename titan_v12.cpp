@@ -220,6 +220,15 @@ void speak(string t) {
     string c="powershell -Command \"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('"+safe_t+"');\""; 
     system(c.c_str()); 
 }
+bool get_human_confirmation(string action) {
+    cout << "\n>> [SECURITY]: Titan requests permission to " << action << endl;
+    speak("Commander, confirmation required.");
+    cout << ">> [CONFIRM] (y/n): ";
+    
+    string choice;
+    getline(cin, choice);
+    return (choice == "y" || choice == "Y");
+}
 
 int main() {
     remove("titan_ears.py"); remove("titan_capture.py"); remove("titan_vision.py");
@@ -265,20 +274,25 @@ int main() {
                 save_mem("TITAN", answer);
 
                 if (answer.rfind("TYPE:", 0) == 0) type_text_safe(answer.substr(5)); 
-                else if (answer.rfind("CLICK:", 0) == 0) {
-                    try {
-                        string c = answer.substr(6);
-                        int comma = c.find(",");
-                        if(comma != string::npos)
-                            click_mouse_safe(stoi(c.substr(0, comma)), stoi(c.substr(comma+1)));
-                    } catch (...) { cout << ">> [ERROR] Bad Click Coords" << endl; }
-                }
-                else if (answer.rfind("WATCH", 0) == 0) {
-                    capture_screen(); 
-                    string s = run_python_vision();
-                    cout << ">> [SEES]: " << s.substr(0, 50) << "..." << endl;
-                    save_mem("TITAN (SEES)", s);
-                }
+               // ... inside the if/else if chain ...
+
+else if (answer.rfind("CMD:", 0) == 0) {
+    string cmd = answer.substr(4);
+    if (get_human_confirmation("execute command: " + cmd)) {
+        exec_cmd_safe(cmd);
+    } else {
+        cout << ">> [TITAN]: Action aborted by user." << endl;
+        speak("Action aborted.");
+    }
+}
+else if (answer.rfind("SYS:", 0) == 0) {
+    string sys_act = answer.substr(4);
+    if (get_human_confirmation("perform system action: " + sys_act)) {
+        system_power(sys_act);
+    } else {
+        cout << ">> [TITAN]: System action canceled." << endl;
+    }
+}
                 else if (answer.rfind("CMD:", 0) == 0) exec_cmd_safe(answer.substr(4));
                 else if (answer.rfind("VOL:", 0) == 0) set_volume(answer.substr(4));
                 else if (answer.rfind("SYS:", 0) == 0) system_power(answer.substr(4));

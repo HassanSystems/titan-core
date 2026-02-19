@@ -1,5 +1,5 @@
 // ==================================================================================
-// PROJECT: TITAN CORE - V18 (Self-Healing Agent)
+// PROJECT: TITAN CORE - V19 (Self-Healing Agent,phython vision)
 // ==================================================================================
 //
 // ARCHITECTURE:
@@ -529,6 +529,23 @@ string execute_action(const Action &act) {
     } else if (act.type == "SPEAK") {
         speak(act.target);
         return "Spoke: " + act.target;
+    } else if (act.type == "CLICK") {
+        size_t comma = act.target.find(',');
+        if (comma != string::npos) {
+            try {
+                click_mouse_safe(stoi(act.target.substr(0, comma)), stoi(act.target.substr(comma + 1)));
+                return "SUCCESS: Clicked " + act.target;
+            } catch (...) { return "FAILED: Invalid coordinates"; }
+        }
+        return "FAILED: Invalid CLICK format";
+    } else if (act.type == "WATCH") {
+        capture_screen();
+        string ocr_result = run_command_capture("\"" + TESSERACT_PATH + "\" screen_memory.png stdout");
+        append_memory("VISUAL OBSERVATION (Screen Capture):\n" + ocr_result);
+        return "Saw: " + ocr_result;
+    } else if (act.type == "SYS") {
+        system_power(act.target);
+        return "System: " + act.target;
     }
     return "Unknown action type: " + act.type;
 }
@@ -553,45 +570,40 @@ string call_llm(httplib::Client &cli, const string &system_context, const string
     }
     return "ERROR_NETWORK: No response (status: " + to_string(res ? res->status : -1) + ")";
 }
-
 string build_system_prompt() {
-    return R"(You are Titan V18, an advanced AI agent with the ability to CREATE, RUN, and DEBUG code.
+    return R"(You are Titan V19 (The Observer), an advanced AI agent.
 
+RULES:
 1. You can output MULTIPLE actions. They execute in order.
 2. When asked to create code: WRITE the file, then CMD to run it.
 3. When code has errors: analyze the error, WRITE a fixed version, CMD to run again.
-4. For WRITE: use <<<CODE and CODE>>> delimiters.
-5. PRESERVE EXACT INDENTATION (4 spaces).
+4. PERCEPTION: If the user says "look at my screen", "what do you see", or asks about a window/error, you MUST use ACTION: WATCH first.
 
 FORMAT:
 PLAN: [Reasoning]
-ACTION: WRITE:<filename>
-<<<CODE
-code here
-CODE>>>
-ACTION: CMD:<command>
+ACTION: [ActionType]
 
 ACTIONS:
-- WRITE:<filename>
+- WRITE:<filename> (Use <<<CODE and CODE>>> delimiters)
 - CMD:<shell command>
-- LIST:<relative_path>
-- READ:<relative_path>
-- TYPE:<text>
-- CLICK:<x,y>
-- WATCH (Screenshot + OCR)
+- WATCH (Takes a screenshot and reads text via OCR)
 - SPEAK:<text>
 - SYS:LOCK
 
-EXAMPLE:
+EXAMPLES:
 User: "hello world python"
 PLAN: Create file and run it.
 ACTION: WRITE:hello.py
 <<<CODE
 print("Hello, World!")
 CODE>>>
-ACTION: CMD:python hello.py)";
-}
+ACTION: CMD:python hello.py
 
+User: "Look at my screen. What is the error?"
+PLAN: I need to observe the screen to read the error.
+ACTION: WATCH
+)";
+}
 int main() {
     if (!fs::exists(WORKSPACE_ROOT)) {
         fs::create_directories(WORKSPACE_ROOT);

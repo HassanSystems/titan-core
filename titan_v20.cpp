@@ -1,6 +1,5 @@
-// ==================================================================================
-//  TITAN CORE - V20 (Self-Healing Agent, Web Search, Vision)
-// ==================================================================================
+// TITAN CORE - V20 (Self-Healing Agent, Web Search, Vision, Telemetry)
+// Architecture: Strict C++ Execution Engine -> Dynamic Python Bridges -> LLM
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <winsock2.h>
@@ -15,6 +14,12 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include <chrono>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
 
 #include "httplib.h"
 #include "json.hpp"
@@ -39,6 +44,56 @@ const vector<string> ALLOWED_EXTENSIONS = {
     ".js", ".html", ".css", ".bat", ".ps1", ".java", ".cs", ".xml",
     ".yaml", ".yml", ".ini", ".cfg", ".sh", ".rb", ".go"
 };
+
+class TelemetryLogger {
+private:
+    std::ofstream log_file;
+    std::queue<std::string> message_queue;
+    std::mutex queue_mutex;
+    std::condition_variable cv;
+    std::thread worker_thread;
+    bool running;
+
+    void process_queue() {
+        while (running) {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            cv.wait(lock, [this]() { return !message_queue.empty() || !running; });
+
+            while (!message_queue.empty()) {
+                log_file << message_queue.front() << "\n";
+                message_queue.pop();
+            }
+            log_file.flush();
+        }
+    }
+public:
+    TelemetryLogger(const std::string& filename) : running(true) {
+        log_file.open(filename, std::ios::app);
+        worker_thread = std::thread(&TelemetryLogger::process_queue, this);
+    }
+
+    ~TelemetryLogger() {
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            running = false;
+        }
+        cv.notify_one();
+        if (worker_thread.joinable()) {
+            worker_thread.join();
+        }
+    }
+
+    void log_metric(const std::string& metric_name, int64_t duration_us) {
+        std::string entry = "[TELEMETRY] " + metric_name + " : " + std::to_string(duration_us) + " µs";
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            message_queue.push(entry);
+        }
+        cv.notify_one();
+    }
+};
+
+TelemetryLogger perf_logger("titan_telemetry.log");
 
 void log_action(const string &action_type, const string &details) {
     ofstream f(ACTION_LOG_FILE, ios::app);
@@ -259,11 +314,15 @@ void type_text_safe(const string &text) {
 
 void capture_screen() {
     ofstream f("titan_capture.py");
-    f << "import pyautogui; pyautogui.screenshot().save('screen_memory.png')";
+    // Force Python to save the image directly into the Workspace directory
+    f << "import pyautogui\n"
+      << "try:\n"
+      << "    pyautogui.screenshot().save(r'" << WORKSPACE_ROOT << "\\screen_memory.png')\n"
+      << "except Exception as e:\n"
+      << "    print('Screenshot failed:', e)\n";
     f.close();
     system("python titan_capture.py");
 }
-
 string run_python_vision() {
     ofstream f("titan_vision.py");
     f << "import pyautogui, subprocess; pyautogui.screenshot('screen_memory.png'); "
@@ -630,7 +689,12 @@ int main() {
             "\nBattery: " + get_battery_status() + 
             "\nRecent Memory:\n" + load_recent_memory();
 
+        auto llm_start = chrono::steady_clock::now();
         string answer = call_llm(cli, system_context, user_input);
+        auto llm_end = chrono::steady_clock::now();
+        
+        auto llm_duration = chrono::duration_cast<chrono::microseconds>(llm_end - llm_start).count();
+        perf_logger.log_metric("LLM_INFERENCE", llm_duration);
 
         if (answer.rfind("ERROR_", 0) == 0) {
             cout << ">> [ERROR]: " << answer << endl;
@@ -656,7 +720,12 @@ int main() {
             }
             cout << endl;
 
+            auto act_start = chrono::steady_clock::now();
             string result = execute_action(actions[i]);
+            auto act_end = chrono::steady_clock::now();
+
+            auto act_duration = chrono::duration_cast<chrono::microseconds>(act_end - act_start).count();
+            perf_logger.log_metric("EXECUTE_" + actions[i].type, act_duration);
 
             // HARD STOP: Halt execution for observation actions
             if (actions[i].type.find("SEARCH:") == 0 || actions[i].type == "WATCH") {
@@ -681,7 +750,12 @@ int main() {
             
             append_memory("SYSTEM: Auto-fix attempt " + to_string(retry));
 
+            auto fix_llm_start = chrono::steady_clock::now();
             string fix_answer = call_llm(cli, system_context + "\nERROR:\n" + last_cmd_output, fix_prompt);
+            auto fix_llm_end = chrono::steady_clock::now();
+            
+            auto fix_llm_duration = chrono::duration_cast<chrono::microseconds>(fix_llm_end - fix_llm_start).count();
+            perf_logger.log_metric("LLM_INFERENCE_FIX", fix_llm_duration);
             
             cout << "\n>> [TITAN FIX]:\n" << fix_answer << endl;
             
@@ -696,7 +770,12 @@ int main() {
                 }
                 cout << endl;
 
+                auto act_start = chrono::steady_clock::now();
                 string result = execute_action(act);
+                auto act_end = chrono::steady_clock::now();
+
+                auto act_duration = chrono::duration_cast<chrono::microseconds>(act_end - act_start).count();
+                perf_logger.log_metric("EXECUTE_" + act.type, act_duration);
 
                 // HARD STOP: Halt execution for observation actions
                 if (act.type.find("SEARCH:") == 0 || act.type == "WATCH") {

@@ -1,16 +1,44 @@
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
 #include <winsock2.h>
 #include <string>
-#include <thread> // REQUIRED for preventing the freeze
+#include <thread>
 
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
 bool isRunning = true;
+string myUsername = "";
 
-// THREAD FUNCTION: Listens for messages in the background
-// This prevents the "Freeze" because it never stops the main typing loop
+struct Message {
+    string type;   
+    string from;
+    string to;     
+    string body;
+};
+
+string SerializeMessage(const Message& msg) {
+    return "TYPE:" + msg.type + "\nFROM:" + msg.from + "\nTO:" + msg.to + "\nBODY:" + msg.body + "\n[END]";
+}
+
+Message ParseMessage(const string& raw) {
+    Message msg;
+    size_t t_pos = raw.find("TYPE:");
+    size_t f_pos = raw.find("\nFROM:");
+    size_t to_pos = raw.find("\nTO:");
+    size_t b_pos = raw.find("\nBODY:");
+    size_t end_pos = raw.find("\n[END]");
+
+    if (t_pos != string::npos && f_pos != string::npos && to_pos != string::npos && b_pos != string::npos && end_pos != string::npos) {
+        msg.type = raw.substr(t_pos + 5, f_pos - (t_pos + 5));
+        msg.from = raw.substr(f_pos + 6, to_pos - (f_pos + 6));
+        msg.to = raw.substr(to_pos + 4, b_pos - (to_pos + 4));
+        msg.body = raw.substr(b_pos + 6, end_pos - (b_pos + 6));
+    }
+    return msg;
+}
+
 void ReceiveHandler(SOCKET clientSocket) {
     char buffer[4096];
     while (isRunning) {
@@ -23,10 +51,22 @@ void ReceiveHandler(SOCKET clientSocket) {
             break;
         }
 
-        string msg(buffer, bytesReceived);
+        string raw_data(buffer, bytesReceived);
+        Message msg = ParseMessage(raw_data);
         
-        // VISUAL FIX: Move cursor to start (\r), print message, then restore prompt
-        cout << "\r" << msg << "\n> " << flush; 
+        if (msg.type.empty()) continue;
+
+        cout << "\r                                                                \r"; 
+        
+        if (msg.type == "PUBLIC") {
+            cout << "[" << msg.from << "]: " << msg.body << "\n> " << flush;
+        } 
+        else if (msg.type == "PRIVATE") {
+            cout << "[Private from " << msg.from << "]: " << msg.body << "\n> " << flush;
+        } 
+        else if (msg.type == "SYSTEM") {
+            cout << "[SYSTEM]: " << msg.body << "\n> " << flush;
+        }
     }
 }
 
@@ -40,38 +80,56 @@ int main() {
     serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
     serverAddr.sin_port = htons(8080);
 
-    cout << ">> [CLIENT] Connecting to Titan Core..." << endl;
+    cout << ">> [CLIENT] Connecting to Network..." << endl;
     if (connect(clientSocket, (SOCKADDR*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         cout << ">> [FATAL] Server offline." << endl;
         return 1;
     }
-    cout << ">> [SUCCESS] Connected!" << endl;
 
-    // STEP 1: HANDSHAKE (Send Name)
-    string name;
     cout << ">> Enter your Username: ";
-    getline(cin, name);
-    send(clientSocket, name.c_str(), name.length(), 0);
+    getline(cin, myUsername);
+    
+    Message join_msg = {"SYSTEM", myUsername, "server", "JOIN"};
+    string join_packet = SerializeMessage(join_msg);
+    send(clientSocket, join_packet.c_str(), join_packet.length(), 0);
 
-    cout << ">> [INFO] Welcome, " << name << ". You can now chat.\n" << endl;
-
-    // STEP 2: START LISTENER THREAD
     thread receiver(ReceiveHandler, clientSocket);
-    receiver.detach(); // Detach so it runs forever in background
+    receiver.detach(); 
 
-    // STEP 3: MAIN LOOP (Typing Only)
-    string message;
+    string input;
     while (isRunning) {
         cout << "> ";
-        getline(cin, message);
+        getline(cin, input);
 
-        if (message == "exit") {
+        if (input == "exit") {
             isRunning = false;
             break;
         }
+        if (input.empty()) continue;
 
-        // Send immediately. Do NOT wait for reply.
-        send(clientSocket, message.c_str(), message.length(), 0);
+        Message outMsg;
+        outMsg.from = myUsername;
+
+        if (input[0] == '@') {
+            size_t spacePos = input.find(' ');
+            if (spacePos != string::npos) {
+                outMsg.type = "PRIVATE";
+                outMsg.to = input.substr(1, spacePos - 1); 
+                outMsg.body = input.substr(spacePos + 1);    
+                
+                cout << "[Sent Private to " << outMsg.to << "]: " << outMsg.body << endl;
+            } else {
+                cout << "[ERROR] Invalid format. Use: @username message" << endl;
+                continue;
+            }
+        } else {
+            outMsg.type = "PUBLIC";
+            outMsg.to = "ALL";
+            outMsg.body = input;
+        }
+
+        string packet = SerializeMessage(outMsg);
+        send(clientSocket, packet.c_str(), packet.length(), 0);
     }
 
     closesocket(clientSocket);

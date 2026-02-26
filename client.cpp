@@ -41,6 +41,8 @@ Message ParseMessage(const string& raw) {
 
 void ReceiveHandler(SOCKET clientSocket) {
     char buffer[4096];
+    string tcp_buffer = ""; // Fixed: Buffer to store partial packets
+    
     while (isRunning) {
         memset(buffer, 0, 4096);
         int bytesReceived = recv(clientSocket, buffer, 4096, 0);
@@ -51,21 +53,31 @@ void ReceiveHandler(SOCKET clientSocket) {
             break;
         }
 
-        string raw_data(buffer, bytesReceived);
-        Message msg = ParseMessage(raw_data);
+        // Fixed: Append incoming stream bytes to our buffer
+        tcp_buffer.append(buffer, bytesReceived);
         
-        if (msg.type.empty()) continue;
+        // Fixed: Process all complete messages containing [END]
+        while (true) {
+            size_t end_pos = tcp_buffer.find("\n[END]");
+            if (end_pos == string::npos) break; // Incomplete message, wait for next recv
+            
+            string raw_data = tcp_buffer.substr(0, end_pos + 6);
+            tcp_buffer.erase(0, end_pos + 6);
 
-        cout << "\r                                                                \r"; 
-        
-        if (msg.type == "PUBLIC") {
-            cout << "[" << msg.from << "]: " << msg.body << "\n> " << flush;
-        } 
-        else if (msg.type == "PRIVATE") {
-            cout << "[Private from " << msg.from << "]: " << msg.body << "\n> " << flush;
-        } 
-        else if (msg.type == "SYSTEM") {
-            cout << "[SYSTEM]: " << msg.body << "\n> " << flush;
+            Message msg = ParseMessage(raw_data);
+            if (msg.type.empty()) continue;
+
+            cout << "\r                                                                \r"; 
+            
+            if (msg.type == "PUBLIC") {
+                cout << "[" << msg.from << "]: " << msg.body << "\n> " << flush;
+            } 
+            else if (msg.type == "PRIVATE") {
+                cout << "[Private from " << msg.from << "]: " << msg.body << "\n> " << flush;
+            } 
+            else if (msg.type == "SYSTEM") {
+                cout << "[SYSTEM]: " << msg.body << "\n> " << flush;
+            }
         }
     }
 }

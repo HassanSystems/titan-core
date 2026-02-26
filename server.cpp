@@ -77,13 +77,7 @@ void RouteMessage(const Message& msg, SOCKET senderSocket) {
         cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
         LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
         
-        if (msg.to == "titan") {
-            cout << ">> [TITAN RECEIVED]: " << msg.body << " (Agent offline)" << endl;
-            Message reply = {"SYSTEM", "Server", msg.from, "Titan is offline. Architecture upgrade in progress."};
-            string packet = SerializeMessage(reply);
-            send(senderSocket, packet.c_str(), packet.length(), 0);
-            return;
-        }
+        // --- TRAINING WHEELS REMOVED: Titan placeholder block deleted here ---
 
         SOCKET targetSocket = INVALID_SOCKET;
         
@@ -110,28 +104,37 @@ void RouteMessage(const Message& msg, SOCKET senderSocket) {
 void ClientHandler(SOCKET clientSocket) {
     char buffer[4096] = {0};
     string username = "Unknown";
+    string tcp_buffer = ""; // Fixed: Buffer to handle chopped stream data
 
+    // Initial Join Phase
     int bytesReceived = recv(clientSocket, buffer, 4096, 0);
-
     if (bytesReceived > 0) {
-        string raw_data(buffer, bytesReceived);
-        Message join_msg = ParseMessage(raw_data);
+        tcp_buffer.append(buffer, bytesReceived);
+        size_t end_pos = tcp_buffer.find("\n[END]");
         
-        if (join_msg.type == "SYSTEM" && join_msg.body == "JOIN") {
-            username = join_msg.from;
+        if (end_pos != string::npos) {
+            string raw_data = tcp_buffer.substr(0, end_pos + 6);
+            tcp_buffer.erase(0, end_pos + 6);
             
-            map_lock.lock();
-            client_map[clientSocket] = username;
-            map_lock.unlock();
+            Message join_msg = ParseMessage(raw_data);
             
-            cout << ">> [CONN] " << username << " has joined!" << endl;
-            
-            Message welcome = {"SYSTEM", "Server", username, "Welcome to the Titan Network."};
-            string pckt = SerializeMessage(welcome);
-            send(clientSocket, pckt.c_str(), pckt.length(), 0);
+            if (join_msg.type == "SYSTEM" && join_msg.body == "JOIN") {
+                username = join_msg.from;
+                
+                map_lock.lock();
+                client_map[clientSocket] = username;
+                map_lock.unlock();
+                
+                cout << ">> [CONN] " << username << " has joined!" << endl;
+                
+                Message welcome = {"SYSTEM", "Server", username, "Welcome to the Titan Network."};
+                string pckt = SerializeMessage(welcome);
+                send(clientSocket, pckt.c_str(), pckt.length(), 0);
+            }
         }
     }
 
+    // Main Listen Loop
     while (true) {
         memset(buffer, 0, 4096);
         int bytes = recv(clientSocket, buffer, 4096, 0);
@@ -146,11 +149,22 @@ void ClientHandler(SOCKET clientSocket) {
             break;
         }
 
-        string raw_data(buffer, bytes);
-        Message parsed_msg = ParseMessage(raw_data);
+        // Fixed: Append incoming stream bytes to our persistent frame buffer
+        tcp_buffer.append(buffer, bytes);
         
-        if (!parsed_msg.type.empty()) {
-            RouteMessage(parsed_msg, clientSocket);
+        // Fixed: Read out ALL complete messages currently stored in the buffer
+        while (true) {
+            size_t end_pos = tcp_buffer.find("\n[END]");
+            if (end_pos == string::npos) break; // Not enough data yet, wait for next recv()
+            
+            string raw_data = tcp_buffer.substr(0, end_pos + 6);
+            tcp_buffer.erase(0, end_pos + 6);
+
+            Message parsed_msg = ParseMessage(raw_data);
+            
+            if (!parsed_msg.type.empty()) {
+                RouteMessage(parsed_msg, clientSocket);
+            }
         }
     }
 

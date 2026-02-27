@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <fstream>
+#include <deque>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -14,6 +15,10 @@ using namespace std;
 
 map<SOCKET, string> client_map;
 mutex map_lock;
+
+deque<string> global_chat_history;
+mutex history_mutex;
+const int MAX_HISTORY_LINES = 15;
 
 struct Message {
     string type;   
@@ -67,17 +72,42 @@ void BroadcastPublic(const Message& msg, SOCKET senderSocket) {
     }
 }
 
-void RouteMessage(const Message& msg, SOCKET senderSocket) {
+void RouteMessage(Message msg, SOCKET senderSocket) {
     if (msg.type == "PUBLIC") {
         cout << ">> [PUBLIC] " << msg.from << ": " << msg.body << endl;
         LogMessage("[PUBLIC] " + msg.from + ": " + msg.body);
+
+        {
+            lock_guard<mutex> lock(history_mutex);
+            global_chat_history.push_back(msg.from + " said: " + msg.body);
+            if (global_chat_history.size() > MAX_HISTORY_LINES) {
+                global_chat_history.pop_front();
+            }
+        }
+
         BroadcastPublic(msg, senderSocket);
     } 
     else if (msg.type == "PRIVATE") {
         cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
         LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
-        
-        // --- TRAINING WHEELS REMOVED: Titan placeholder block deleted here ---
+
+        if (msg.to == "titan") {
+            string context_payload = "[RECENT CHAT HISTORY IN THIS ROOM]:\n";
+            
+            {
+                lock_guard<mutex> lock(history_mutex);
+                if (global_chat_history.empty()) {
+                    context_payload += "(No recent messages)\n";
+                } else {
+                    for (const string& past_msg : global_chat_history) {
+                        context_payload += past_msg + "\n";
+                    }
+                }
+            }
+            
+            context_payload += "[END CHAT HISTORY]\n\nActual Request from " + msg.from + ": " + msg.body;
+            msg.body = context_payload; 
+        }
 
         SOCKET targetSocket = INVALID_SOCKET;
         
@@ -104,9 +134,8 @@ void RouteMessage(const Message& msg, SOCKET senderSocket) {
 void ClientHandler(SOCKET clientSocket) {
     char buffer[4096] = {0};
     string username = "Unknown";
-    string tcp_buffer = ""; // Fixed: Buffer to handle chopped stream data
+    string tcp_buffer = ""; 
 
-    // Initial Join Phase
     int bytesReceived = recv(clientSocket, buffer, 4096, 0);
     if (bytesReceived > 0) {
         tcp_buffer.append(buffer, bytesReceived);
@@ -134,7 +163,6 @@ void ClientHandler(SOCKET clientSocket) {
         }
     }
 
-    // Main Listen Loop
     while (true) {
         memset(buffer, 0, 4096);
         int bytes = recv(clientSocket, buffer, 4096, 0);
@@ -149,13 +177,11 @@ void ClientHandler(SOCKET clientSocket) {
             break;
         }
 
-        // Fixed: Append incoming stream bytes to our persistent frame buffer
         tcp_buffer.append(buffer, bytes);
         
-        // Fixed: Read out ALL complete messages currently stored in the buffer
         while (true) {
             size_t end_pos = tcp_buffer.find("\n[END]");
-            if (end_pos == string::npos) break; // Not enough data yet, wait for next recv()
+            if (end_pos == string::npos) break; 
             
             string raw_data = tcp_buffer.substr(0, end_pos + 6);
             tcp_buffer.erase(0, end_pos + 6);

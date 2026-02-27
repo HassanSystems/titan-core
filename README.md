@@ -3,7 +3,7 @@ Titan Core (V23) — Asynchronous Networked AI Agent
 Titan is a local, C++-based autonomous AI agent that executes system actions, performs web search, and communicates over a custom TCP/IP network.
 It uses a guarded ReAct-style control loop driven by a locally hosted LLM.
 
-Version: V23 (Day 44)
+Version: V24 (Day 45)
 Model Backend: Qwen 2.5 Coder (7B) via Ollama
 Platform: Windows (Winsock2, GDI32)
 

@@ -28,6 +28,7 @@
 
 #include "httplib.h"
 #include "json.hpp"
+#include "protocol.h" // 👈 NEW CENTRALIZED PROTOCOL
 
 using namespace std;
 using json = nlohmann::json;
@@ -52,13 +53,6 @@ const vector<string> ALLOWED_EXTENSIONS = {
 };
 
 // --- NETWORK & QUEUE GLOBALS ---
-struct Message {
-    string type;
-    string from;
-    string to;
-    string body;
-};
-
 struct QueuedCommand {
     Message msg;
     chrono::steady_clock::time_point queued_time;
@@ -68,27 +62,6 @@ queue<QueuedCommand> command_queue;
 mutex queue_mutex;
 condition_variable queue_cv;
 atomic<bool> titan_running{true};
-
-string SerializeMessage(const Message& msg) {
-    return "TYPE:" + msg.type + "\nFROM:" + msg.from + "\nTO:" + msg.to + "\nBODY:" + msg.body + "\n[END]";
-}
-
-Message ParseMessage(const string& raw) {
-    Message msg;
-    size_t t_pos = raw.find("TYPE:");
-    size_t f_pos = raw.find("\nFROM:");
-    size_t to_pos = raw.find("\nTO:");
-    size_t b_pos = raw.find("\nBODY:");
-    size_t end_pos = raw.find("\n[END]");
-
-    if (t_pos != string::npos && f_pos != string::npos && to_pos != string::npos && b_pos != string::npos && end_pos != string::npos) {
-        msg.type = raw.substr(t_pos + 5, f_pos - (t_pos + 5));
-        msg.from = raw.substr(f_pos + 6, to_pos - (f_pos + 6));
-        msg.to = raw.substr(to_pos + 4, b_pos - (to_pos + 4));
-        msg.body = raw.substr(b_pos + 6, end_pos - (b_pos + 6));
-    }
-    return msg;
-}
 
 // --- TELEMETRY LOGGER ---
 class TelemetryLogger {
@@ -522,7 +495,7 @@ string call_llm(httplib::Client &cli, const string &full_prompt) {
             {"temperature", 0.4},        
             {"repeat_penalty", 1.1},     
             {"num_predict", 1024},
-            {"num_ctx", 8192} // Fixed: Expanded context window to handle chat history payload
+            {"num_ctx", 8192} 
         }}
     };
 
@@ -561,20 +534,35 @@ void NetworkListener(SOCKET titanSocket) {
             string raw_data = tcp_buffer.substr(0, end_pos + 6);
             tcp_buffer.erase(0, end_pos + 6);
 
+            // UPDATED: USING PROTOCOL.H
             Message msg = ParseMessage(raw_data);
 
-            if (msg.type == "PRIVATE" && msg.to == "titan") {
-                cout << "\n>> [NETWORK] Received command from @" << msg.from << endl;
+            if (msg.protocol == PROTOCOL_VERSION) {
+                // 1. Eavesdrop on public chat to build memory silently
+                if (msg.payload == PayloadType::TEXT && msg.to == "ALL") {
+                    append_memory("[PUBLIC] " + msg.from + ": " + msg.body);
+                }
                 
-                QueuedCommand qc;
-                qc.msg = msg;
-                qc.queued_time = chrono::steady_clock::now();
+                // 2. React ONLY to direct commands
+                else if (msg.payload == PayloadType::COMMAND && msg.to == "titan") {
+                    cout << "\n>> [NETWORK] Received command from @" << msg.from << endl;
+                    
+                    unique_lock<mutex> lock(queue_mutex);
+                    if (command_queue.size() >= 32) {
+                        cout << ">> [WARNING] Command queue full. Dropped message from " << msg.from << endl;
+                        lock.unlock();
+                        continue; 
+                    }
 
-                unique_lock<mutex> lock(queue_mutex);
-                command_queue.push(qc); 
-                lock.unlock();
-                
-                queue_cv.notify_one(); 
+                    QueuedCommand qc;
+                    qc.msg = msg;
+                    qc.queued_time = chrono::steady_clock::now();
+
+                    command_queue.push(qc); 
+                    lock.unlock();
+                    
+                    queue_cv.notify_one(); 
+                }
             }
         }
     }
@@ -604,7 +592,14 @@ int main() {
         return 1;
     }
 
-    Message join_msg = {"SYSTEM", "titan", "server", "JOIN"};
+    //  UPDATED JOIN MESSAGE FORMAT
+    Message join_msg;
+    join_msg.protocol = PROTOCOL_VERSION;
+    join_msg.payload = PayloadType::SYSTEM;
+    join_msg.from = "titan";
+    join_msg.to = "server";
+    join_msg.body = "JOIN";
+    
     string join_packet = SerializeMessage(join_msg);
     send(titanSocket, join_packet.c_str(), join_packet.length(), 0);
 
@@ -711,7 +706,14 @@ int main() {
         auto total_mission_time = chrono::duration_cast<chrono::microseconds>(exec_end_time - exec_start_time).count();
         perf_logger.log_metric("TOTAL_MISSION_TIME", total_mission_time);
 
-        Message reply_msg = {"PRIVATE", "titan", sender, final_result}; 
+        //  UPDATED REPLY MESSAGE FORMAT
+        Message reply_msg;
+        reply_msg.protocol = PROTOCOL_VERSION;
+        reply_msg.payload = PayloadType::TEXT;
+        reply_msg.from = "titan";
+        reply_msg.to = sender;
+        reply_msg.body = final_result;
+
         string reply_packet = SerializeMessage(reply_msg);
         send(titanSocket, reply_packet.c_str(), reply_packet.length(), 0);
         

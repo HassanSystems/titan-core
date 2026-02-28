@@ -11,6 +11,8 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+#include "protocol.h" 
+
 using namespace std;
 
 map<SOCKET, string> client_map;
@@ -19,34 +21,6 @@ mutex map_lock;
 deque<string> global_chat_history;
 mutex history_mutex;
 const int MAX_HISTORY_LINES = 15;
-
-struct Message {
-    string type;   
-    string from;
-    string to;     
-    string body;
-};
-
-string SerializeMessage(const Message& msg) {
-    return "TYPE:" + msg.type + "\nFROM:" + msg.from + "\nTO:" + msg.to + "\nBODY:" + msg.body + "\n[END]";
-}
-
-Message ParseMessage(const string& raw) {
-    Message msg;
-    size_t t_pos = raw.find("TYPE:");
-    size_t f_pos = raw.find("\nFROM:");
-    size_t to_pos = raw.find("\nTO:");
-    size_t b_pos = raw.find("\nBODY:");
-    size_t end_pos = raw.find("\n[END]");
-
-    if (t_pos != string::npos && f_pos != string::npos && to_pos != string::npos && b_pos != string::npos && end_pos != string::npos) {
-        msg.type = raw.substr(t_pos + 5, f_pos - (t_pos + 5));
-        msg.from = raw.substr(f_pos + 6, to_pos - (f_pos + 6));
-        msg.to = raw.substr(to_pos + 4, b_pos - (to_pos + 4));
-        msg.body = raw.substr(b_pos + 6, end_pos - (b_pos + 6));
-    }
-    return msg;
-}
 
 void LogMessage(const string& message) {
     ofstream logFile("titan_logs.txt", ios::app); 
@@ -73,7 +47,7 @@ void BroadcastPublic(const Message& msg, SOCKET senderSocket) {
 }
 
 void RouteMessage(Message msg, SOCKET senderSocket) {
-    if (msg.type == "PUBLIC") {
+    if (msg.to == "ALL") {
         cout << ">> [PUBLIC] " << msg.from << ": " << msg.body << endl;
         LogMessage("[PUBLIC] " + msg.from + ": " + msg.body);
 
@@ -87,27 +61,9 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
 
         BroadcastPublic(msg, senderSocket);
     } 
-    else if (msg.type == "PRIVATE") {
+    else { 
         cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
         LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
-
-        if (msg.to == "titan") {
-            string context_payload = "[RECENT CHAT HISTORY IN THIS ROOM]:\n";
-            
-            {
-                lock_guard<mutex> lock(history_mutex);
-                if (global_chat_history.empty()) {
-                    context_payload += "(No recent messages)\n";
-                } else {
-                    for (const string& past_msg : global_chat_history) {
-                        context_payload += past_msg + "\n";
-                    }
-                }
-            }
-            
-            context_payload += "[END CHAT HISTORY]\n\nActual Request from " + msg.from + ": " + msg.body;
-            msg.body = context_payload; 
-        }
 
         SOCKET targetSocket = INVALID_SOCKET;
         
@@ -124,7 +80,13 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
             string packet = SerializeMessage(msg);
             send(targetSocket, packet.c_str(), packet.length(), 0);
         } else {
-            Message err = {"SYSTEM", "Server", msg.from, "User '" + msg.to + "' not found."};
+            Message err;
+            err.protocol = PROTOCOL_VERSION;
+            err.payload = PayloadType::SYSTEM;
+            err.from = "Server";
+            err.to = msg.from;
+            err.body = "User '" + msg.to + "' not found.";
+            
             string err_packet = SerializeMessage(err);
             send(senderSocket, err_packet.c_str(), err_packet.length(), 0);
         }
@@ -147,7 +109,7 @@ void ClientHandler(SOCKET clientSocket) {
             
             Message join_msg = ParseMessage(raw_data);
             
-            if (join_msg.type == "SYSTEM" && join_msg.body == "JOIN") {
+            if (join_msg.payload == PayloadType::SYSTEM && join_msg.body == "JOIN") {
                 username = join_msg.from;
                 
                 map_lock.lock();
@@ -156,7 +118,13 @@ void ClientHandler(SOCKET clientSocket) {
                 
                 cout << ">> [CONN] " << username << " has joined!" << endl;
                 
-                Message welcome = {"SYSTEM", "Server", username, "Welcome to the Titan Network."};
+                Message welcome;
+                welcome.protocol = PROTOCOL_VERSION;
+                welcome.payload = PayloadType::SYSTEM;
+                welcome.from = "Server";
+                welcome.to = username;
+                welcome.body = "Welcome to the Titan Network.";
+                
                 string pckt = SerializeMessage(welcome);
                 send(clientSocket, pckt.c_str(), pckt.length(), 0);
             }
@@ -188,7 +156,7 @@ void ClientHandler(SOCKET clientSocket) {
 
             Message parsed_msg = ParseMessage(raw_data);
             
-            if (!parsed_msg.type.empty()) {
+            if (parsed_msg.protocol == PROTOCOL_VERSION) {
                 RouteMessage(parsed_msg, clientSocket);
             }
         }

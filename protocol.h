@@ -18,12 +18,18 @@ struct Message {
     std::string body;
 };
 
+struct FileMeta {
+    std::string filename;
+    uint64_t size_bytes;
+    std::string sha256;
+};
+
 inline std::string SerializeMessage(const Message& msg) {
     return "V:" + std::to_string(msg.protocol) + "\nPTYPE:" + std::to_string(static_cast<int>(msg.payload)) + "\nFROM:" + msg.from + "\nTO:" + msg.to + "\nBODY:" + msg.body + "\n[END]";
 }
 
 inline Message ParseMessage(const std::string& raw) {
-    Message msg = {-1, PayloadType::TEXT, "", "", ""}; // -1 means invalid/error
+    Message msg = {-1, PayloadType::TEXT, "", "", ""};
     size_t v_pos = raw.find("V:");
     size_t pt_pos = raw.find("\nPTYPE:");
     size_t f_pos = raw.find("\nFROM:");
@@ -39,4 +45,8 @@ inline Message ParseMessage(const std::string& raw) {
         msg.body = raw.substr(b_pos + 6, end_pos - (b_pos + 6));
     }
     return msg;
+}
+
+inline std::string SerializeFileMeta(const FileMeta& meta) {
+    return "{\"filename\":\"" + meta.filename + "\",\"size_bytes\":" + std::to_string(meta.size_bytes) + ",\"sha256\":\"" + meta.sha256 + "\"}";
 }

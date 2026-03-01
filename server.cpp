@@ -47,23 +47,32 @@ void BroadcastPublic(const Message& msg, SOCKET senderSocket) {
 }
 
 void RouteMessage(Message msg, SOCKET senderSocket) {
-    if (msg.to == "ALL") {
-        cout << ">> [PUBLIC] " << msg.from << ": " << msg.body << endl;
-        LogMessage("[PUBLIC] " + msg.from + ": " + msg.body);
+    if (msg.payload == PayloadType::FILE_META) {
+        cout << ">> [META TRANSFER] " << msg.from << " -> " << msg.to << " : " << msg.body << endl;
+        LogMessage("[META TRANSFER] " + msg.from + " -> " + msg.to);
+    }
 
-        {
-            lock_guard<mutex> lock(history_mutex);
-            global_chat_history.push_back(msg.from + " said: " + msg.body);
-            if (global_chat_history.size() > MAX_HISTORY_LINES) {
-                global_chat_history.pop_front();
+    if (msg.to == "ALL") {
+        if (msg.payload != PayloadType::FILE_META) {
+            cout << ">> [PUBLIC] " << msg.from << ": " << msg.body << endl;
+            LogMessage("[PUBLIC] " + msg.from + ": " + msg.body);
+
+            {
+                lock_guard<mutex> lock(history_mutex);
+                global_chat_history.push_back(msg.from + " said: " + msg.body);
+                if (global_chat_history.size() > MAX_HISTORY_LINES) {
+                    global_chat_history.pop_front();
+                }
             }
         }
 
         BroadcastPublic(msg, senderSocket);
     } 
     else { 
-        cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
-        LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
+        if (msg.payload != PayloadType::FILE_META) {
+            cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
+            LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
+        }
 
         SOCKET targetSocket = INVALID_SOCKET;
         

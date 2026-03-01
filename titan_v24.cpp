@@ -28,7 +28,7 @@
 
 #include "httplib.h"
 #include "json.hpp"
-#include "protocol.h" // 👈 NEW CENTRALIZED PROTOCOL
+#include "protocol.h" 
 
 using namespace std;
 using json = nlohmann::json;
@@ -44,7 +44,7 @@ const string TESSERACT_PATH = R"(C:\Program Files\Tesseract-OCR\tesseract.exe)";
 const size_t MAX_READ_SIZE = 10000; 
 const size_t MAX_MEMORY_LINES = 30; 
 const int LLM_TIMEOUT_SEC = 180;    
-const int MAX_AGENT_TURNS = 15; // Increased to prevent timeout on complex tasks
+const int MAX_AGENT_TURNS = 15; 
 
 const vector<string> ALLOWED_EXTENSIONS = {
     ".txt", ".md", ".cpp", ".hpp", ".h", ".py", ".json", ".log",
@@ -534,10 +534,16 @@ void NetworkListener(SOCKET titanSocket) {
             string raw_data = tcp_buffer.substr(0, end_pos + 6);
             tcp_buffer.erase(0, end_pos + 6);
 
-            // UPDATED: USING PROTOCOL.H
             Message msg = ParseMessage(raw_data);
 
             if (msg.protocol == PROTOCOL_VERSION) {
+                
+                // 👈 STRICT AI REJECTION OF METADATA
+                if (msg.payload == PayloadType::FILE_META) {
+                    cout << "\n>> [SYSTEM] Ignored FILE_META from " << msg.from << endl;
+                    continue; 
+                }
+
                 // 1. Eavesdrop on public chat to build memory silently
                 if (msg.payload == PayloadType::TEXT && msg.to == "ALL") {
                     append_memory("[PUBLIC] " + msg.from + ": " + msg.body);
@@ -592,7 +598,6 @@ int main() {
         return 1;
     }
 
-    //  UPDATED JOIN MESSAGE FORMAT
     Message join_msg;
     join_msg.protocol = PROTOCOL_VERSION;
     join_msg.payload = PayloadType::SYSTEM;
@@ -706,7 +711,6 @@ int main() {
         auto total_mission_time = chrono::duration_cast<chrono::microseconds>(exec_end_time - exec_start_time).count();
         perf_logger.log_metric("TOTAL_MISSION_TIME", total_mission_time);
 
-        //  UPDATED REPLY MESSAGE FORMAT
         Message reply_msg;
         reply_msg.protocol = PROTOCOL_VERSION;
         reply_msg.payload = PayloadType::TEXT;

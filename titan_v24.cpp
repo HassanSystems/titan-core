@@ -538,6 +538,12 @@ void NetworkListener(SOCKET titanSocket) {
 
             if (msg.protocol == PROTOCOL_VERSION) {
                 
+                // 👈 DAY 48: STRICT AI REJECTION OF FILE CHUNKS
+                if (msg.payload == PayloadType::FILE_CHUNK) {
+                    log_action("IGNORE", "FILE_CHUNK ignored");
+                    continue;
+                }
+
                 // 👈 STRICT AI REJECTION OF METADATA
                 if (msg.payload == PayloadType::FILE_META) {
                     cout << "\n>> [SYSTEM] Ignored FILE_META from " << msg.from << endl;

@@ -53,7 +53,8 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
     }
 
     if (msg.to == "ALL") {
-        if (msg.payload != PayloadType::FILE_META) {
+        // DAY 48: Do NOT log or store FILE_CHUNK payloads
+        if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK) {
             cout << ">> [PUBLIC] " << msg.from << ": " << msg.body << endl;
             LogMessage("[PUBLIC] " + msg.from + ": " + msg.body);
 
@@ -69,7 +70,8 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
         BroadcastPublic(msg, senderSocket);
     } 
     else { 
-        if (msg.payload != PayloadType::FILE_META) {
+        // DAY 48: Do NOT log FILE_CHUNK payloads
+        if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK) {
             cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
             LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
         }

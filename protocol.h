@@ -2,12 +2,14 @@
 #include <string>
 
 constexpr int PROTOCOL_VERSION = 1;
+constexpr size_t CHUNK_SIZE = 4096;
 
 enum class PayloadType {
     TEXT = 0,
     COMMAND = 1,
     FILE_META = 2,
-    SYSTEM = 3
+    SYSTEM = 3,
+    FILE_CHUNK = 4
 };
 
 struct Message {
@@ -22,6 +24,13 @@ struct FileMeta {
     std::string filename;
     uint64_t size_bytes;
     std::string sha256;
+};
+
+struct FileChunk {
+    std::string filename;
+    uint32_t index;
+    uint32_t total_chunks;
+    std::string data_base64;
 };
 
 inline std::string SerializeMessage(const Message& msg) {
@@ -49,4 +58,8 @@ inline Message ParseMessage(const std::string& raw) {
 
 inline std::string SerializeFileMeta(const FileMeta& meta) {
     return "{\"filename\":\"" + meta.filename + "\",\"size_bytes\":" + std::to_string(meta.size_bytes) + ",\"sha256\":\"" + meta.sha256 + "\"}";
+}
+
+inline std::string SerializeFileChunk(const FileChunk& chunk) {
+    return "{\"filename\":\"" + chunk.filename + "\",\"index\":" + std::to_string(chunk.index) + ",\"total_chunks\":" + std::to_string(chunk.total_chunks) + ",\"data\":\"" + chunk.data_base64 + "\"}";
 }

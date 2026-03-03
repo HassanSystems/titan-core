@@ -11,6 +11,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #include "protocol.h"
+#include "hash.h" 
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -18,7 +19,6 @@ namespace fs = std::filesystem;
 bool isRunning = true;
 string myUsername = "";
 
-// --- BASE64 HELPERS ---
 const string b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 string base64_encode(const char* buf, unsigned int bufLen) {
     string ret;
@@ -75,8 +75,8 @@ string base64_decode(string const& encoded_string) {
     return ret;
 }
 
-// --- FILE RECEIVER STATE ---
 map<string, map<uint32_t, string>> file_buffers;
+map<string, string> expected_hashes; 
 
 void ReceiveHandler(SOCKET clientSocket) {
     char buffer[4096];
@@ -110,10 +110,20 @@ void ReceiveHandler(SOCKET clientSocket) {
                 cout << "[SYSTEM]: " << msg.body << "\n> " << flush;
             } 
             else if (msg.payload == PayloadType::FILE_META) {
+                try {
+                    string b = msg.body;
+                    size_t fn_s = b.find("\"filename\":\"") + 12;
+                    size_t fn_e = b.find("\"", fn_s);
+                    string filename = b.substr(fn_s, fn_e - fn_s);
+
+                    size_t h_s = b.find("\"sha256\":\"") + 10;
+                    size_t h_e = b.find("\"}", h_s);
+                    expected_hashes[filename] = b.substr(h_s, h_e - h_s);
+                } catch(...) {}
+
                 cout << "[META from " << msg.from << "]: " << msg.body << "\n> " << flush;
             }
             else if (msg.payload == PayloadType::FILE_CHUNK) {
-                // Ugly JSON Parse - Do NOT replace with a library yet
                 try {
                     string b = msg.body;
                     size_t fn_s = b.find("\"filename\":\"") + 12;
@@ -140,8 +150,17 @@ void ReceiveHandler(SOCKET clientSocket) {
                             out_file << file_buffers[filename][i];
                         }
                         out_file.close();
-                        cout << "[FILE] Reassembled & Saved: " << filename << "\n> " << flush;
+                        
+                        string computed_hash = ComputeFileHash(filename);
+                        if (computed_hash == expected_hashes[filename]) {
+                            cout << "[FILE] Reassembled & Verified (" << computed_hash << "): " << filename << "\n> " << flush;
+                        } else {
+                            cout << "[ERROR] CORRUPT TRANSFER! Hash mismatch for " << filename << ". Deleting.\n> " << flush;
+                            fs::remove(filename); 
+                        }
+
                         file_buffers.erase(filename);
+                        expected_hashes.erase(filename);
                     }
                 } catch (...) {
                     cout << "[ERROR] Corrupt file chunk dropped.\n> " << flush;
@@ -216,7 +235,14 @@ int main() {
                     FileMeta meta;
                     meta.filename = fs::path(path).filename().string();
                     meta.size_bytes = fs::file_size(path);
-                    meta.sha256 = "pending_hash"; 
+                    
+                    cout << "[META] Hashing file..." << endl;
+                    meta.sha256 = ComputeFileHash(path); 
+
+                    if (meta.sha256 == "ERROR") {
+                        cout << "[ERROR] Could not read file for hashing." << endl;
+                        continue;
+                    }
 
                     outMsg.payload = PayloadType::FILE_META;
                     outMsg.to = target;
@@ -225,14 +251,10 @@ int main() {
                     string packet = SerializeMessage(outMsg);
                     send(clientSocket, packet.c_str(), packet.length(), 0);
                     
-                    cout << "[META] Announced " << meta.filename << " (" << meta.size_bytes << " bytes) to " << target << endl;
+                    cout << "[META] Announced " << meta.filename << " (Hash: " << meta.sha256 << ") to " << target << endl;
 
-                    // --- DAY 48: CHUNKING ENGINE ---
                     ifstream file(path, ios::binary);
-                    if (!file) {
-                        cout << "[ERROR] Cannot open file for reading." << endl;
-                        continue;
-                    }
+                    if (!file) continue;
 
                     uint32_t total_chunks = (meta.size_bytes + CHUNK_SIZE - 1) / CHUNK_SIZE;
                     char chunk_buffer[CHUNK_SIZE];
@@ -257,7 +279,7 @@ int main() {
                         string chunk_packet = SerializeMessage(chunkMsg);
                         send(clientSocket, chunk_packet.c_str(), chunk_packet.length(), 0);
                         
-                        this_thread::sleep_for(chrono::milliseconds(5)); // Prevents overwhelming dumb TCP buffer
+                        this_thread::sleep_for(chrono::milliseconds(5)); 
                     }
                     cout << "[FILE] " << total_chunks << " chunks dispatched." << endl;
 

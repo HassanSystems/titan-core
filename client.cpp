@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <vector>
+#include <set>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -77,6 +78,7 @@ string base64_decode(string const& encoded_string) {
 
 map<string, map<uint32_t, string>> file_buffers;
 map<string, string> expected_hashes; 
+map<string, set<uint32_t>> received_indices; 
 
 void ReceiveHandler(SOCKET clientSocket) {
     char buffer[4096];
@@ -134,6 +136,11 @@ void ReceiveHandler(SOCKET clientSocket) {
                     size_t idx_e = b.find(",", idx_s);
                     uint32_t index = stoul(b.substr(idx_s, idx_e - idx_s));
 
+                    if (received_indices[filename].count(index)) {
+                        continue; 
+                    }
+                    received_indices[filename].insert(index);
+
                     size_t tc_s = b.find("\"total_chunks\":") + 15;
                     size_t tc_e = b.find(",", tc_s);
                     uint32_t total_chunks = stoul(b.substr(tc_s, tc_e - tc_s));
@@ -161,6 +168,7 @@ void ReceiveHandler(SOCKET clientSocket) {
 
                         file_buffers.erase(filename);
                         expected_hashes.erase(filename);
+                        received_indices.erase(filename);
                     }
                 } catch (...) {
                     cout << "[ERROR] Corrupt file chunk dropped.\n> " << flush;
@@ -218,6 +226,15 @@ int main() {
             break;
         }
         if (input.empty()) continue;
+
+        if (input.substr(0, 7) == "/abort ") {
+            string filename = input.substr(7);
+            file_buffers.erase(filename);
+            expected_hashes.erase(filename);
+            received_indices.erase(filename);
+            cout << "[SYSTEM] Aborted transfer and purged memory for: " << filename << endl;
+            continue;
+        }
 
         Message outMsg;
         outMsg.protocol = PROTOCOL_VERSION;

@@ -78,11 +78,11 @@ string base64_decode(string const& encoded_string) {
     return ret;
 }
 
-// --- FILE RECEIVER STATE (Keyed by transfer_id) ---
 map<string, map<uint32_t, string>> transfer_buffers;
 map<string, string> expected_hashes; 
 map<string, set<uint32_t>> received_indices; 
 map<string, string> transfer_filenames;
+map<string, bool> window_acks; 
 
 void ReceiveHandler(SOCKET clientSocket) {
     char buffer[4096];
@@ -132,9 +132,16 @@ void ReceiveHandler(SOCKET clientSocket) {
                     transfer_filenames[transfer_id] = filename;
 
                     cout << "[META from " << msg.from << "] ID: " << transfer_id << " | File: " << filename << "\n> " << flush;
-                } catch(...) {
-                    cout << "[ERROR] Corrupt META dropped.\n> " << flush;
-                }
+                } catch(...) {}
+            }
+            else if (msg.payload == PayloadType::FILE_ACK) {
+                try {
+                    string b = msg.body;
+                    size_t tid_s = b.find("\"transfer_id\":\"") + 15;
+                    size_t tid_e = b.find("\"", tid_s);
+                    string transfer_id = b.substr(tid_s, tid_e - tid_s);
+                    window_acks[transfer_id] = true;
+                } catch (...) {}
             }
             else if (msg.payload == PayloadType::FILE_CHUNK) {
                 try {
@@ -161,6 +168,20 @@ void ReceiveHandler(SOCKET clientSocket) {
                     string data_b64 = b.substr(d_s, d_e - d_s);
 
                     transfer_buffers[transfer_id][index] = base64_decode(data_b64);
+
+                    if ((index + 1) % CHUNK_WINDOW == 0 || (index + 1) == total_chunks) {
+                        FileAck ack;
+                        ack.transfer_id = transfer_id;
+                        Message ackMsg;
+                        ackMsg.protocol = PROTOCOL_VERSION;
+                        ackMsg.payload = PayloadType::FILE_ACK;
+                        ackMsg.from = myUsername;
+                        ackMsg.to = msg.from;
+                        ackMsg.body = SerializeFileAck(ack);
+                        
+                        string ack_packet = SerializeMessage(ackMsg);
+                        send(clientSocket, ack_packet.c_str(), ack_packet.length(), 0);
+                    }
                     
                     if (transfer_buffers[transfer_id].size() == total_chunks) {
                         string filename = transfer_filenames[transfer_id];
@@ -178,11 +199,11 @@ void ReceiveHandler(SOCKET clientSocket) {
                             fs::remove(filename); 
                         }
 
-                        // Cleanup state
                         transfer_buffers.erase(transfer_id);
                         expected_hashes.erase(transfer_id);
                         received_indices.erase(transfer_id);
                         transfer_filenames.erase(transfer_id);
+                        window_acks.erase(transfer_id);
                     }
                 } catch (...) {
                     cout << "[ERROR] Corrupt file chunk dropped.\n> " << flush;
@@ -199,7 +220,7 @@ void ReceiveHandler(SOCKET clientSocket) {
 }
 
 int main() {
-    srand(static_cast<unsigned int>(time(0))); // Initialize RNG
+    srand(static_cast<unsigned int>(time(0))); 
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 
@@ -248,6 +269,7 @@ int main() {
             expected_hashes.erase(transfer_id);
             received_indices.erase(transfer_id);
             transfer_filenames.erase(transfer_id);
+            window_acks.erase(transfer_id);
             cout << "[SYSTEM] Aborted transfer and purged memory for ID: " << transfer_id << endl;
             continue;
         }
@@ -279,6 +301,8 @@ int main() {
                         continue;
                     }
 
+                    window_acks[t_id] = false;
+
                     outMsg.payload = PayloadType::FILE_META;
                     outMsg.to = target;
                     outMsg.body = SerializeFileMeta(meta);
@@ -297,6 +321,13 @@ int main() {
 
                     while (file.read(chunk_buffer, CHUNK_SIZE) || file.gcount() > 0) {
                         size_t bytes_read = file.gcount();
+
+                        if (chunk_index > 0 && chunk_index % CHUNK_WINDOW == 0) {
+                            while (!window_acks[t_id]) {
+                                this_thread::sleep_for(chrono::milliseconds(5));
+                            }
+                            window_acks[t_id] = false; 
+                        }
                         
                         FileChunk chunk;
                         chunk.transfer_id = t_id;
@@ -315,7 +346,7 @@ int main() {
                         string chunk_packet = SerializeMessage(chunkMsg);
                         send(clientSocket, chunk_packet.c_str(), chunk_packet.length(), 0);
                         
-                        this_thread::sleep_for(chrono::milliseconds(5)); 
+                        this_thread::sleep_for(chrono::milliseconds(2)); 
                     }
                     cout << "[FILE] " << total_chunks << " chunks dispatched for ID: " << t_id << endl;
 

@@ -3,13 +3,15 @@
 
 constexpr int PROTOCOL_VERSION = 1;
 constexpr size_t CHUNK_SIZE = 4096;
+constexpr int CHUNK_WINDOW = 50;
 
 enum class PayloadType {
     TEXT = 0,
     COMMAND = 1,
     FILE_META = 2,
     SYSTEM = 3,
-    FILE_CHUNK = 4
+    FILE_CHUNK = 4,
+    FILE_ACK = 5
 };
 
 struct Message {
@@ -33,6 +35,10 @@ struct FileChunk {
     uint32_t index;
     uint32_t total_chunks;
     std::string data_base64;
+};
+
+struct FileAck {
+    std::string transfer_id;
 };
 
 inline std::string SerializeMessage(const Message& msg) {
@@ -64,4 +70,8 @@ inline std::string SerializeFileMeta(const FileMeta& meta) {
 
 inline std::string SerializeFileChunk(const FileChunk& chunk) {
     return "{\"transfer_id\":\"" + chunk.transfer_id + "\",\"filename\":\"" + chunk.filename + "\",\"index\":" + std::to_string(chunk.index) + ",\"total_chunks\":" + std::to_string(chunk.total_chunks) + ",\"data\":\"" + chunk.data_base64 + "\"}";
+}
+
+inline std::string SerializeFileAck(const FileAck& ack) {
+    return "{\"transfer_id\":\"" + ack.transfer_id + "\"}";
 }

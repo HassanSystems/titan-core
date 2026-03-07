@@ -82,7 +82,9 @@ map<string, map<uint32_t, string>> transfer_buffers;
 map<string, string> expected_hashes; 
 map<string, set<uint32_t>> received_indices; 
 map<string, string> transfer_filenames;
-map<string, bool> window_acks; 
+map<string, bool> window_acks;
+map<string, bool> aborted_transfers;
+map<string, string> transfer_senders;
 
 void ReceiveHandler(SOCKET clientSocket) {
     char buffer[4096];
@@ -130,6 +132,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                     size_t h_e = b.find("\"}", h_s);
                     expected_hashes[transfer_id] = b.substr(h_s, h_e - h_s);
                     transfer_filenames[transfer_id] = filename;
+                    transfer_senders[transfer_id] = msg.from;
 
                     cout << "[META from " << msg.from << "] ID: " << transfer_id << " | File: " << filename << "\n> " << flush;
                 } catch(...) {}
@@ -142,6 +145,33 @@ void ReceiveHandler(SOCKET clientSocket) {
                     string transfer_id = b.substr(tid_s, tid_e - tid_s);
                     window_acks[transfer_id] = true;
                 } catch (...) {}
+            }
+            else if (msg.payload == PayloadType::FILE_ERROR) {
+                try {
+                    string b = msg.body;
+                    size_t tid_s = b.find("\"transfer_id\":\"") + 15;
+                    size_t tid_e = b.find("\"", tid_s);
+                    string transfer_id = b.substr(tid_s, tid_e - tid_s);
+
+                    size_t c_s = b.find("\"code\":") + 7;
+                    size_t c_e = b.find(",", c_s);
+                    int code = stoi(b.substr(c_s, c_e - c_s));
+
+                    size_t m_s = b.find("\"message\":\"") + 11;
+                    size_t m_e = b.find("\"}", m_s);
+                    string message = b.substr(m_s, m_e - m_s);
+
+                    cout << "\n[NETWORK ERROR] Transfer " << transfer_id << " failed! Code: " << code << " - " << message << "\n> " << flush;
+
+                    aborted_transfers[transfer_id] = true; 
+
+                    transfer_buffers.erase(transfer_id);
+                    expected_hashes.erase(transfer_id);
+                    received_indices.erase(transfer_id);
+                    transfer_filenames.erase(transfer_id);
+                    window_acks.erase(transfer_id);
+                    transfer_senders.erase(transfer_id);
+                } catch(...) {}
             }
             else if (msg.payload == PayloadType::FILE_CHUNK) {
                 try {
@@ -197,6 +227,19 @@ void ReceiveHandler(SOCKET clientSocket) {
                         } else {
                             cout << "[ERROR] CORRUPT TRANSFER! Hash mismatch for " << filename << ". Deleting.\n> " << flush;
                             fs::remove(filename); 
+
+                            FileError err;
+                            err.transfer_id = transfer_id;
+                            err.code = ErrorCode::HASH_MISMATCH;
+                            err.message = "Hash mismatch during final reassembly.";
+                            Message errMsg;
+                            errMsg.protocol = PROTOCOL_VERSION;
+                            errMsg.payload = PayloadType::FILE_ERROR;
+                            errMsg.from = myUsername;
+                            errMsg.to = msg.from;
+                            errMsg.body = SerializeFileError(err);
+                            string err_packet = SerializeMessage(errMsg);
+                            send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
                         }
 
                         transfer_buffers.erase(transfer_id);
@@ -204,6 +247,8 @@ void ReceiveHandler(SOCKET clientSocket) {
                         received_indices.erase(transfer_id);
                         transfer_filenames.erase(transfer_id);
                         window_acks.erase(transfer_id);
+                        transfer_senders.erase(transfer_id);
+                        aborted_transfers.erase(transfer_id);
                     }
                 } catch (...) {
                     cout << "[ERROR] Corrupt file chunk dropped.\n> " << flush;
@@ -265,11 +310,31 @@ int main() {
 
         if (input.substr(0, 7) == "/abort ") {
             string transfer_id = input.substr(7);
+            
+            if (transfer_senders.count(transfer_id)) {
+                FileError err;
+                err.transfer_id = transfer_id;
+                err.code = ErrorCode::USER_ABORT;
+                err.message = "Receiver explicitly aborted the transfer.";
+                Message errMsg;
+                errMsg.protocol = PROTOCOL_VERSION;
+                errMsg.payload = PayloadType::FILE_ERROR;
+                errMsg.from = myUsername;
+                errMsg.to = transfer_senders[transfer_id];
+                errMsg.body = SerializeFileError(err);
+                
+                string err_packet = SerializeMessage(errMsg);
+                send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
+            }
+
             transfer_buffers.erase(transfer_id);
             expected_hashes.erase(transfer_id);
             received_indices.erase(transfer_id);
             transfer_filenames.erase(transfer_id);
             window_acks.erase(transfer_id);
+            transfer_senders.erase(transfer_id);
+            aborted_transfers[transfer_id] = true;
+            
             cout << "[SYSTEM] Aborted transfer and purged memory for ID: " << transfer_id << endl;
             continue;
         }
@@ -302,6 +367,7 @@ int main() {
                     }
 
                     window_acks[t_id] = false;
+                    aborted_transfers[t_id] = false;
 
                     outMsg.payload = PayloadType::FILE_META;
                     outMsg.to = target;
@@ -320,11 +386,20 @@ int main() {
                     uint32_t chunk_index = 0;
 
                     while (file.read(chunk_buffer, CHUNK_SIZE) || file.gcount() > 0) {
+                        if (aborted_transfers[t_id]) {
+                            cout << "[SYSTEM] Transfer halted. Chunks stopped." << endl;
+                            break;
+                        }
+
                         size_t bytes_read = file.gcount();
 
                         if (chunk_index > 0 && chunk_index % CHUNK_WINDOW == 0) {
-                            while (!window_acks[t_id]) {
+                            while (!window_acks[t_id] && !aborted_transfers[t_id]) {
                                 this_thread::sleep_for(chrono::milliseconds(5));
+                            }
+                            if (aborted_transfers[t_id]) {
+                                cout << "[SYSTEM] Transfer halted. Chunks stopped." << endl;
+                                break;
                             }
                             window_acks[t_id] = false; 
                         }
@@ -348,7 +423,9 @@ int main() {
                         
                         this_thread::sleep_for(chrono::milliseconds(2)); 
                     }
-                    cout << "[FILE] " << total_chunks << " chunks dispatched for ID: " << t_id << endl;
+                    if (!aborted_transfers[t_id]) {
+                        cout << "[FILE] " << total_chunks << " chunks dispatched for ID: " << t_id << endl;
+                    }
 
                 } catch (...) {
                     cout << "[ERROR] File transmission failed." << endl;

@@ -11,7 +11,15 @@ enum class PayloadType {
     FILE_META = 2,
     SYSTEM = 3,
     FILE_CHUNK = 4,
-    FILE_ACK = 5
+    FILE_ACK = 5,
+    FILE_ERROR = 6
+};
+
+enum class ErrorCode {
+    INVALID_META = 0,
+    HASH_MISMATCH = 1,
+    CHUNK_OUT_OF_ORDER = 2,
+    USER_ABORT = 3
 };
 
 struct Message {
@@ -39,6 +47,12 @@ struct FileChunk {
 
 struct FileAck {
     std::string transfer_id;
+};
+
+struct FileError {
+    std::string transfer_id;
+    ErrorCode code;
+    std::string message;
 };
 
 inline std::string SerializeMessage(const Message& msg) {
@@ -74,4 +88,8 @@ inline std::string SerializeFileChunk(const FileChunk& chunk) {
 
 inline std::string SerializeFileAck(const FileAck& ack) {
     return "{\"transfer_id\":\"" + ack.transfer_id + "\"}";
+}
+
+inline std::string SerializeFileError(const FileError& err) {
+    return "{\"transfer_id\":\"" + err.transfer_id + "\",\"code\":" + std::to_string(static_cast<int>(err.code)) + ",\"message\":\"" + err.message + "\"}";
 }

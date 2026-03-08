@@ -10,6 +10,7 @@
 #include <set>
 #include <cstdlib>
 #include <ctime>
+#include <memory>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -78,7 +79,7 @@ string base64_decode(string const& encoded_string) {
     return ret;
 }
 
-map<string, map<uint32_t, string>> transfer_buffers;
+map<string, shared_ptr<ofstream>> active_streams;
 map<string, string> expected_hashes; 
 map<string, set<uint32_t>> received_indices; 
 map<string, string> transfer_filenames;
@@ -134,6 +135,8 @@ void ReceiveHandler(SOCKET clientSocket) {
                     transfer_filenames[transfer_id] = filename;
                     transfer_senders[transfer_id] = msg.from;
 
+                    active_streams[transfer_id] = make_shared<ofstream>(filename, ios::binary | ios::trunc);
+
                     cout << "[META from " << msg.from << "] ID: " << transfer_id << " | File: " << filename << "\n> " << flush;
                 } catch(...) {}
             }
@@ -165,7 +168,12 @@ void ReceiveHandler(SOCKET clientSocket) {
 
                     aborted_transfers[transfer_id] = true; 
 
-                    transfer_buffers.erase(transfer_id);
+                    if (active_streams.count(transfer_id)) {
+                        active_streams[transfer_id]->close();
+                        active_streams.erase(transfer_id);
+                        fs::remove(transfer_filenames[transfer_id]);
+                    }
+
                     expected_hashes.erase(transfer_id);
                     received_indices.erase(transfer_id);
                     transfer_filenames.erase(transfer_id);
@@ -197,7 +205,9 @@ void ReceiveHandler(SOCKET clientSocket) {
                     size_t d_e = b.find("\"}", d_s);
                     string data_b64 = b.substr(d_s, d_e - d_s);
 
-                    transfer_buffers[transfer_id][index] = base64_decode(data_b64);
+                    if (active_streams.count(transfer_id)) {
+                        *active_streams[transfer_id] << base64_decode(data_b64);
+                    }
 
                     if ((index + 1) % CHUNK_WINDOW == 0 || (index + 1) == total_chunks) {
                         FileAck ack;
@@ -213,17 +223,17 @@ void ReceiveHandler(SOCKET clientSocket) {
                         send(clientSocket, ack_packet.c_str(), ack_packet.length(), 0);
                     }
                     
-                    if (transfer_buffers[transfer_id].size() == total_chunks) {
+                    if (received_indices[transfer_id].size() == total_chunks) {
                         string filename = transfer_filenames[transfer_id];
-                        ofstream out_file(filename, ios::binary);
-                        for (uint32_t i = 0; i < total_chunks; i++) {
-                            out_file << transfer_buffers[transfer_id][i];
+
+                        if (active_streams.count(transfer_id)) {
+                            active_streams[transfer_id]->close();
+                            active_streams.erase(transfer_id);
                         }
-                        out_file.close();
                         
                         string computed_hash = ComputeFileHash(filename);
                         if (computed_hash == expected_hashes[transfer_id]) {
-                            cout << "[FILE] Reassembled & Verified (" << transfer_id << "): " << filename << "\n> " << flush;
+                            cout << "[FILE] Streamed & Verified (" << transfer_id << "): " << filename << "\n> " << flush;
                         } else {
                             cout << "[ERROR] CORRUPT TRANSFER! Hash mismatch for " << filename << ". Deleting.\n> " << flush;
                             fs::remove(filename); 
@@ -231,7 +241,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                             FileError err;
                             err.transfer_id = transfer_id;
                             err.code = ErrorCode::HASH_MISMATCH;
-                            err.message = "Hash mismatch during final reassembly.";
+                            err.message = "Hash mismatch during final verification.";
                             Message errMsg;
                             errMsg.protocol = PROTOCOL_VERSION;
                             errMsg.payload = PayloadType::FILE_ERROR;
@@ -242,7 +252,6 @@ void ReceiveHandler(SOCKET clientSocket) {
                             send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
                         }
 
-                        transfer_buffers.erase(transfer_id);
                         expected_hashes.erase(transfer_id);
                         received_indices.erase(transfer_id);
                         transfer_filenames.erase(transfer_id);
@@ -327,7 +336,14 @@ int main() {
                 send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
             }
 
-            transfer_buffers.erase(transfer_id);
+            if (active_streams.count(transfer_id)) {
+                active_streams[transfer_id]->close();
+                active_streams.erase(transfer_id);
+                if (fs::exists(transfer_filenames[transfer_id])) {
+                    fs::remove(transfer_filenames[transfer_id]);
+                }
+            }
+
             expected_hashes.erase(transfer_id);
             received_indices.erase(transfer_id);
             transfer_filenames.erase(transfer_id);
@@ -335,7 +351,7 @@ int main() {
             transfer_senders.erase(transfer_id);
             aborted_transfers[transfer_id] = true;
             
-            cout << "[SYSTEM] Aborted transfer and purged memory for ID: " << transfer_id << endl;
+            cout << "[SYSTEM] Aborted transfer and purged disk for ID: " << transfer_id << endl;
             continue;
         }
 

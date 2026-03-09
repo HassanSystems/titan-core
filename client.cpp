@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <memory>
+#include <cstdint>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -81,7 +82,7 @@ string base64_decode(string const& encoded_string) {
 
 map<string, shared_ptr<ofstream>> active_streams;
 map<string, string> expected_hashes; 
-map<string, set<uint32_t>> received_indices; 
+map<string, uint64_t> expected_chunk_index; 
 map<string, string> transfer_filenames;
 map<string, bool> window_acks;
 map<string, bool> aborted_transfers;
@@ -135,6 +136,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                     transfer_filenames[transfer_id] = filename;
                     transfer_senders[transfer_id] = msg.from;
 
+                    expected_chunk_index[transfer_id] = 0;
                     active_streams[transfer_id] = make_shared<ofstream>(filename, ios::binary | ios::trunc);
 
                     cout << "[META from " << msg.from << "] ID: " << transfer_id << " | File: " << filename << "\n> " << flush;
@@ -175,7 +177,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                     }
 
                     expected_hashes.erase(transfer_id);
-                    received_indices.erase(transfer_id);
+                    expected_chunk_index.erase(transfer_id);
                     transfer_filenames.erase(transfer_id);
                     window_acks.erase(transfer_id);
                     transfer_senders.erase(transfer_id);
@@ -190,16 +192,40 @@ void ReceiveHandler(SOCKET clientSocket) {
                     
                     size_t idx_s = b.find("\"index\":") + 8;
                     size_t idx_e = b.find(",", idx_s);
-                    uint32_t index = stoul(b.substr(idx_s, idx_e - idx_s));
+                    uint64_t index = stoull(b.substr(idx_s, idx_e - idx_s));
 
-                    if (received_indices[transfer_id].count(index)) {
-                        continue; 
+                    if (index != expected_chunk_index[transfer_id]) {
+                        cout << "[ERROR] Chunk out of order for " << transfer_id << ". Expected: " << expected_chunk_index[transfer_id] << " Got: " << index << endl;
+                        
+                        FileError err;
+                        err.transfer_id = transfer_id;
+                        err.code = ErrorCode::CHUNK_OUT_OF_ORDER;
+                        err.message = "Chunk sequence mismatch. Expected " + to_string(expected_chunk_index[transfer_id]);
+                        Message errMsg;
+                        errMsg.protocol = PROTOCOL_VERSION;
+                        errMsg.payload = PayloadType::FILE_ERROR;
+                        errMsg.from = myUsername;
+                        errMsg.to = transfer_senders[transfer_id];
+                        errMsg.body = SerializeFileError(err);
+                        string err_packet = SerializeMessage(errMsg);
+                        send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
+
+                        if (active_streams.count(transfer_id)) {
+                            active_streams[transfer_id]->close();
+                            active_streams.erase(transfer_id);
+                            fs::remove(transfer_filenames[transfer_id]);
+                        }
+                        expected_hashes.erase(transfer_id);
+                        expected_chunk_index.erase(transfer_id);
+                        transfer_filenames.erase(transfer_id);
+                        window_acks.erase(transfer_id);
+                        transfer_senders.erase(transfer_id);
+                        continue;
                     }
-                    received_indices[transfer_id].insert(index);
 
                     size_t tc_s = b.find("\"total_chunks\":") + 15;
                     size_t tc_e = b.find(",", tc_s);
-                    uint32_t total_chunks = stoul(b.substr(tc_s, tc_e - tc_s));
+                    uint64_t total_chunks = stoull(b.substr(tc_s, tc_e - tc_s));
 
                     size_t d_s = b.find("\"data\":\"") + 8;
                     size_t d_e = b.find("\"}", d_s);
@@ -208,6 +234,8 @@ void ReceiveHandler(SOCKET clientSocket) {
                     if (active_streams.count(transfer_id)) {
                         *active_streams[transfer_id] << base64_decode(data_b64);
                     }
+
+                    expected_chunk_index[transfer_id]++;
 
                     if ((index + 1) % CHUNK_WINDOW == 0 || (index + 1) == total_chunks) {
                         FileAck ack;
@@ -223,7 +251,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                         send(clientSocket, ack_packet.c_str(), ack_packet.length(), 0);
                     }
                     
-                    if (received_indices[transfer_id].size() == total_chunks) {
+                    if (expected_chunk_index[transfer_id] == total_chunks) {
                         string filename = transfer_filenames[transfer_id];
 
                         if (active_streams.count(transfer_id)) {
@@ -253,7 +281,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                         }
 
                         expected_hashes.erase(transfer_id);
-                        received_indices.erase(transfer_id);
+                        expected_chunk_index.erase(transfer_id);
                         transfer_filenames.erase(transfer_id);
                         window_acks.erase(transfer_id);
                         transfer_senders.erase(transfer_id);
@@ -345,7 +373,7 @@ int main() {
             }
 
             expected_hashes.erase(transfer_id);
-            received_indices.erase(transfer_id);
+            expected_chunk_index.erase(transfer_id);
             transfer_filenames.erase(transfer_id);
             window_acks.erase(transfer_id);
             transfer_senders.erase(transfer_id);
@@ -397,9 +425,9 @@ int main() {
                     ifstream file(path, ios::binary);
                     if (!file) continue;
 
-                    uint32_t total_chunks = (meta.size_bytes + CHUNK_SIZE - 1) / CHUNK_SIZE;
+                    uint64_t total_chunks = (meta.size_bytes + CHUNK_SIZE - 1) / CHUNK_SIZE;
                     char chunk_buffer[CHUNK_SIZE];
-                    uint32_t chunk_index = 0;
+                    uint64_t chunk_index = 0;
 
                     while (file.read(chunk_buffer, CHUNK_SIZE) || file.gcount() > 0) {
                         if (aborted_transfers[t_id]) {

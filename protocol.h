@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <cstdint>
 
 constexpr int PROTOCOL_VERSION = 1;
 constexpr size_t CHUNK_SIZE = 4096;
@@ -40,8 +41,8 @@ struct FileMeta {
 struct FileChunk {
     std::string transfer_id;
     std::string filename;
-    uint32_t index;
-    uint32_t total_chunks;
+    uint64_t index;
+    uint64_t total_chunks;
     std::string data_base64;
 };
 

@@ -80,6 +80,11 @@ string base64_decode(string const& encoded_string) {
     return ret;
 }
 
+void LogMessage(const string& text) {
+    ofstream logf("titan_log_" + myUsername + ".txt", ios::app);
+    if (logf) logf << text << "\n";
+}
+
 map<string, shared_ptr<ofstream>> active_streams;
 map<string, string> expected_hashes; 
 map<string, uint64_t> expected_chunk_index; 
@@ -292,10 +297,14 @@ void ReceiveHandler(SOCKET clientSocket) {
                 }
             }
             else if (msg.to == "ALL") {
-                cout << "[" << msg.from << "]: " << msg.body << "\n> " << flush;
+                string output = "[" + msg.from + "]: " + msg.body;
+                cout << output << "\n> " << flush;
+                if (msg.payload == PayloadType::TEXT) LogMessage(output);
             } 
             else {
-                cout << "[Private from " << msg.from << "]: " << msg.body << "\n> " << flush;
+                string output = "[Private from " + msg.from + "]: " + msg.body;
+                cout << output << "\n> " << flush;
+                if (msg.payload == PayloadType::TEXT) LogMessage(output);
             }
         }
     }
@@ -320,6 +329,17 @@ int main() {
 
     cout << ">> Enter your Username: ";
     getline(cin, myUsername);
+
+    ifstream logFile("titan_log_" + myUsername + ".txt");
+    if (logFile) {
+        cout << "=== Chat History ===" << endl;
+        string line;
+        while (getline(logFile, line)) {
+            cout << line << endl;
+        }
+        cout << "====================" << endl;
+        logFile.close();
+    }
     
     Message join_msg;
     join_msg.protocol = PROTOCOL_VERSION;
@@ -487,7 +507,10 @@ int main() {
                 outMsg.body = input.substr(spacePos + 1);    
                 outMsg.payload = (outMsg.to == "titan") ? PayloadType::COMMAND : PayloadType::TEXT;
                 
-                cout << "[Sent Private to " << outMsg.to << "]: " << outMsg.body << endl;
+                string log_str = "[Sent Private to " + outMsg.to + "]: " + outMsg.body;
+                cout << log_str << endl;
+                if (outMsg.payload == PayloadType::TEXT) LogMessage(log_str);
+
             } else {
                 cout << "[ERROR] Invalid format. Use: @username message" << endl;
                 continue;
@@ -496,6 +519,8 @@ int main() {
             outMsg.to = "ALL";
             outMsg.body = input;
             outMsg.payload = PayloadType::TEXT;
+
+            LogMessage("[You -> ALL]: " + input);
         }
 
         string packet = SerializeMessage(outMsg);

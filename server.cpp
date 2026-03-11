@@ -8,6 +8,7 @@
 #include <string>
 #include <fstream>
 #include <deque>
+#include <random>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -15,12 +16,26 @@
 
 using namespace std;
 
-map<SOCKET, string> client_map;
+struct Session {
+    uint64_t session_id;
+    string username;
+    SOCKET socket;
+};
+
+map<string, Session> active_users;
+map<SOCKET, string> socket_to_user;
 mutex map_lock;
 
 deque<string> global_chat_history;
 mutex history_mutex;
 const int MAX_HISTORY_LINES = 15;
+
+uint64_t GenerateSessionID() {
+    static random_device rd;
+    static mt19937_64 gen(rd());
+    static uniform_int_distribution<uint64_t> dis;
+    return dis(gen);
+}
 
 void LogMessage(const string& message) {
     ofstream logFile("titan_logs.txt", ios::app); 
@@ -34,9 +49,9 @@ void BroadcastPublic(const Message& msg, SOCKET senderSocket) {
     vector<SOCKET> targets;
 
     map_lock.lock();
-    for (auto const& [sock, name] : client_map) {
-        if (sock != senderSocket) {
-            targets.push_back(sock);
+    for (auto const& [name, session] : active_users) {
+        if (session.socket != senderSocket) {
+            targets.push_back(session.socket);
         }
     }
     map_lock.unlock();
@@ -53,7 +68,6 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
     }
 
     if (msg.to == "ALL") {
-        // DAY 48: Do NOT log or store FILE_CHUNK payloads
         if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK) {
             cout << ">> [PUBLIC] " << msg.from << ": " << msg.body << endl;
             LogMessage("[PUBLIC] " + msg.from + ": " + msg.body);
@@ -66,11 +80,9 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
                 }
             }
         }
-
         BroadcastPublic(msg, senderSocket);
     } 
     else { 
-        // DAY 48: Do NOT log FILE_CHUNK payloads
         if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK) {
             cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
             LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
@@ -79,11 +91,8 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
         SOCKET targetSocket = INVALID_SOCKET;
         
         map_lock.lock();
-        for (auto const& [sock, name] : client_map) {
-            if (name == msg.to) {
-                targetSocket = sock;
-                break;
-            }
+        if (active_users.count(msg.to)) {
+            targetSocket = active_users[msg.to].socket;
         }
         map_lock.unlock();
 
@@ -96,6 +105,7 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
             err.payload = PayloadType::SYSTEM;
             err.from = "Server";
             err.to = msg.from;
+            err.session_id = 0;
             err.body = "User '" + msg.to + "' not found.";
             
             string err_packet = SerializeMessage(err);
@@ -108,6 +118,7 @@ void ClientHandler(SOCKET clientSocket) {
     char buffer[4096] = {0};
     string username = "Unknown";
     string tcp_buffer = ""; 
+    uint64_t current_session_id = 0;
 
     int bytesReceived = recv(clientSocket, buffer, 4096, 0);
     if (bytesReceived > 0) {
@@ -124,19 +135,41 @@ void ClientHandler(SOCKET clientSocket) {
                 username = join_msg.from;
                 
                 map_lock.lock();
-                client_map[clientSocket] = username;
+                if (active_users.count(username)) {
+                    map_lock.unlock();
+                    
+                    cout << ">> [REJECTED] Duplicate login attempt for: " << username << endl;
+                    
+                    Message rej;
+                    rej.protocol = PROTOCOL_VERSION;
+                    rej.payload = PayloadType::SESSION_REJECT;
+                    rej.from = "Server";
+                    rej.to = username;
+                    rej.session_id = 0;
+                    rej.body = "Username already active on the network.";
+                    
+                    string pckt = SerializeMessage(rej);
+                    send(clientSocket, pckt.c_str(), pckt.length(), 0);
+                    closesocket(clientSocket);
+                    return; 
+                }
+                
+                current_session_id = GenerateSessionID();
+                active_users[username] = {current_session_id, username, clientSocket};
+                socket_to_user[clientSocket] = username;
                 map_lock.unlock();
                 
-                cout << ">> [CONN] " << username << " has joined!" << endl;
+                cout << ">> [CONN] " << username << " assigned Session: " << current_session_id << endl;
                 
-                Message welcome;
-                welcome.protocol = PROTOCOL_VERSION;
-                welcome.payload = PayloadType::SYSTEM;
-                welcome.from = "Server";
-                welcome.to = username;
-                welcome.body = "Welcome to the Titan Network.";
+                Message acc;
+                acc.protocol = PROTOCOL_VERSION;
+                acc.payload = PayloadType::SESSION_ACCEPT;
+                acc.from = "Server";
+                acc.to = username;
+                acc.session_id = current_session_id;
+                acc.body = "Welcome to the Titan Network.";
                 
-                string pckt = SerializeMessage(welcome);
+                string pckt = SerializeMessage(acc);
                 send(clientSocket, pckt.c_str(), pckt.length(), 0);
             }
         }
@@ -148,9 +181,11 @@ void ClientHandler(SOCKET clientSocket) {
 
         if (bytes <= 0) {
             map_lock.lock();
-            if (client_map.count(clientSocket)) {
-                cout << ">> [DISC] " << client_map[clientSocket] << " disconnected." << endl;
-                client_map.erase(clientSocket);
+            if (socket_to_user.count(clientSocket)) {
+                string uname = socket_to_user[clientSocket];
+                cout << ">> [DISC] " << uname << " disconnected." << endl;
+                active_users.erase(uname);
+                socket_to_user.erase(clientSocket);
             }
             map_lock.unlock();
             break;
@@ -168,7 +203,20 @@ void ClientHandler(SOCKET clientSocket) {
             Message parsed_msg = ParseMessage(raw_data);
             
             if (parsed_msg.protocol == PROTOCOL_VERSION) {
-                RouteMessage(parsed_msg, clientSocket);
+                bool is_valid = false;
+                map_lock.lock();
+                if (active_users.count(username) && 
+                    active_users[username].session_id == parsed_msg.session_id && 
+                    parsed_msg.from == username) {
+                    is_valid = true;
+                }
+                map_lock.unlock();
+
+                if (is_valid) {
+                    RouteMessage(parsed_msg, clientSocket);
+                } else {
+                    cout << ">> [SECURITY] Spoofed packet dropped from socket " << clientSocket << endl;
+                }
             }
         }
     }

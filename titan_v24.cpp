@@ -1,8 +1,3 @@
-// TITAN CORE - V24 (Asynchronous Network Node, Hardened ReAct, qwen2.5-coder:7b)
-// Architecture: TCP/IP Producer-Consumer Queue -> ReAct Loop Engine -> OS
-// Anti-Hallucination: Implements Stop Sequences, auto-refeed observations, and Action-First parsing.
-// Telemetry: Tracks Queue Latency, Inference, Tool Execution, and Total Mission Time.
-
 #define _CRT_SECURE_NO_WARNINGS
 #pragma comment(lib, "ws2_32.lib")
 
@@ -25,6 +20,7 @@
 #include <condition_variable>
 #include <thread>
 #include <atomic>
+#include <cstdint>
 
 #include "httplib.h"
 #include "json.hpp"
@@ -34,7 +30,6 @@ using namespace std;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// --- CONFIGURATION GLOBALS ---
 const string WORKSPACE_ROOT = "C:\\TitanWorkspace";
 const string MEMORY_FILE = "titan_memory.txt";
 const string ACTION_LOG_FILE = "titan_actions.log";
@@ -52,7 +47,6 @@ const vector<string> ALLOWED_EXTENSIONS = {
     ".yaml", ".yml", ".ini", ".cfg", ".sh", ".rb", ".go"
 };
 
-// --- NETWORK & QUEUE GLOBALS ---
 struct QueuedCommand {
     Message msg;
     chrono::steady_clock::time_point queued_time;
@@ -62,8 +56,8 @@ queue<QueuedCommand> command_queue;
 mutex queue_mutex;
 condition_variable queue_cv;
 atomic<bool> titan_running{true};
+uint64_t mySessionID = 0;
 
-// --- TELEMETRY LOGGER ---
 class TelemetryLogger {
 private:
     std::ofstream log_file;
@@ -112,7 +106,6 @@ public:
 
 TelemetryLogger perf_logger("titan_telemetry.log");
 
-// --- HELPER FUNCTIONS ---
 void log_action(const string &action_type, const string &details) {
     ofstream f(ACTION_LOG_FILE, ios::app);
     time_t now = time(0);
@@ -177,7 +170,6 @@ string sanitize_python_string(const string& input) {
     return output;
 }
 
-// --- SYSTEM TOOLS ---
 string list_directory(const string &relative_path) {
     fs::path target = fs::path(WORKSPACE_ROOT) / relative_path;
     if (!is_safe_path(target.string())) return "ACCESS DENIED";
@@ -294,7 +286,6 @@ void system_power(const string &action) {
     if (action == "LOCK" && get_human_confirmation("LOCK PC")) LockWorkStation();
 }
 
-// --- HARDENED PARSER ---
 struct Action {
     string type;    
     string target;  
@@ -484,7 +475,6 @@ CODE>>>
 )";
 }   
 
-// --- LLM COMMUNICATION (WITH STOP SEQUENCES) ---
 string call_llm(httplib::Client &cli, const string &full_prompt) {
     json req = {
         {"model", "qwen2.5-coder:7b"}, 
@@ -509,7 +499,6 @@ string call_llm(httplib::Client &cli, const string &full_prompt) {
     return "ERROR_NETWORK: No response (status: " + to_string(res ? res->status : -1) + ")";
 }
 
-// --- V24 NETWORK LISTENER THREAD ---
 void NetworkListener(SOCKET titanSocket) {
     char buffer[4096];
     string tcp_buffer = "";
@@ -538,24 +527,32 @@ void NetworkListener(SOCKET titanSocket) {
 
             if (msg.protocol == PROTOCOL_VERSION) {
                 
-                // 👈 DAY 48: STRICT AI REJECTION OF FILE CHUNKS
+                if (msg.payload == PayloadType::SESSION_ACCEPT) {
+                    mySessionID = msg.session_id;
+                    cout << "[AUTH] Identity Verified. Session ID: " << mySessionID << "\n> " << flush;
+                    continue;
+                }
+                else if (msg.payload == PayloadType::SESSION_REJECT) {
+                    cout << "\n[REJECTED] " << msg.body << endl;
+                    titan_running = false;
+                    queue_cv.notify_all();
+                    break;
+                }
+                
                 if (msg.payload == PayloadType::FILE_CHUNK) {
                     log_action("IGNORE", "FILE_CHUNK ignored");
                     continue;
                 }
 
-                // 👈 STRICT AI REJECTION OF METADATA
                 if (msg.payload == PayloadType::FILE_META) {
                     cout << "\n>> [SYSTEM] Ignored FILE_META from " << msg.from << endl;
                     continue; 
                 }
 
-                // 1. Eavesdrop on public chat to build memory silently
                 if (msg.payload == PayloadType::TEXT && msg.to == "ALL") {
                     append_memory("[PUBLIC] " + msg.from + ": " + msg.body);
                 }
                 
-                // 2. React ONLY to direct commands
                 else if (msg.payload == PayloadType::COMMAND && msg.to == "titan") {
                     cout << "\n>> [NETWORK] Received command from @" << msg.from << endl;
                     
@@ -580,7 +577,6 @@ void NetworkListener(SOCKET titanSocket) {
     }
 }
 
-// --- V24 MAIN EXECUTION ---
 int main() {
     SetConsoleOutputCP(CP_UTF8);
     
@@ -609,12 +605,25 @@ int main() {
     join_msg.payload = PayloadType::SYSTEM;
     join_msg.from = "titan";
     join_msg.to = "server";
+    join_msg.session_id = 0;
     join_msg.body = "JOIN";
     
     string join_packet = SerializeMessage(join_msg);
     send(titanSocket, join_packet.c_str(), join_packet.length(), 0);
 
     thread listener(NetworkListener, titanSocket);
+
+    // Block until auth finishes
+    while (mySessionID == 0 && titan_running) {
+        this_thread::sleep_for(chrono::milliseconds(50));
+    }
+
+    if (!titan_running) {
+        closesocket(titanSocket);
+        WSACleanup();
+        if (listener.joinable()) listener.join();
+        return 1;
+    }
 
     httplib::Client cli("http://localhost:11434");
     cli.set_read_timeout(LLM_TIMEOUT_SEC);
@@ -722,6 +731,7 @@ int main() {
         reply_msg.payload = PayloadType::TEXT;
         reply_msg.from = "titan";
         reply_msg.to = sender;
+        reply_msg.session_id = mySessionID; // Identity injected
         reply_msg.body = final_result;
 
         string reply_packet = SerializeMessage(reply_msg);

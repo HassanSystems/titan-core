@@ -23,6 +23,7 @@ namespace fs = std::filesystem;
 
 bool isRunning = true;
 string myUsername = "";
+uint64_t mySessionID = 0; // DAY 57: Real Identity
 
 const string b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 string base64_encode(const char* buf, unsigned int bufLen) {
@@ -121,7 +122,16 @@ void ReceiveHandler(SOCKET clientSocket) {
 
             cout << "\r                                                                \r"; 
             
-            if (msg.payload == PayloadType::SYSTEM) {
+            if (msg.payload == PayloadType::SESSION_ACCEPT) {
+                mySessionID = msg.session_id;
+                cout << "[AUTH] Identity Verified. Session ID: " << mySessionID << "\n> " << flush;
+            }
+            else if (msg.payload == PayloadType::SESSION_REJECT) {
+                cout << "\n[REJECTED] " << msg.body << endl;
+                isRunning = false;
+                break;
+            }
+            else if (msg.payload == PayloadType::SYSTEM) {
                 cout << "[SYSTEM]: " << msg.body << "\n> " << flush;
             } 
             else if (msg.payload == PayloadType::FILE_META) {
@@ -211,6 +221,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                         errMsg.payload = PayloadType::FILE_ERROR;
                         errMsg.from = myUsername;
                         errMsg.to = transfer_senders[transfer_id];
+                        errMsg.session_id = mySessionID;
                         errMsg.body = SerializeFileError(err);
                         string err_packet = SerializeMessage(errMsg);
                         send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
@@ -250,6 +261,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                         ackMsg.payload = PayloadType::FILE_ACK;
                         ackMsg.from = myUsername;
                         ackMsg.to = msg.from;
+                        ackMsg.session_id = mySessionID;
                         ackMsg.body = SerializeFileAck(ack);
                         
                         string ack_packet = SerializeMessage(ackMsg);
@@ -280,6 +292,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                             errMsg.payload = PayloadType::FILE_ERROR;
                             errMsg.from = myUsername;
                             errMsg.to = msg.from;
+                            errMsg.session_id = mySessionID;
                             errMsg.body = SerializeFileError(err);
                             string err_packet = SerializeMessage(errMsg);
                             send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
@@ -346,6 +359,7 @@ int main() {
     join_msg.payload = PayloadType::SYSTEM;
     join_msg.from = myUsername;
     join_msg.to = "server";
+    join_msg.session_id = 0; // Pre-auth
     join_msg.body = "JOIN";
 
     string join_packet = SerializeMessage(join_msg);
@@ -353,6 +367,17 @@ int main() {
 
     thread receiver(ReceiveHandler, clientSocket);
     receiver.detach(); 
+
+    // Block until auth finishes
+    while (mySessionID == 0 && isRunning) {
+        this_thread::sleep_for(chrono::milliseconds(50));
+    }
+
+    if (!isRunning) {
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
 
     string input;
     while (isRunning) {
@@ -378,6 +403,7 @@ int main() {
                 errMsg.payload = PayloadType::FILE_ERROR;
                 errMsg.from = myUsername;
                 errMsg.to = transfer_senders[transfer_id];
+                errMsg.session_id = mySessionID;
                 errMsg.body = SerializeFileError(err);
                 
                 string err_packet = SerializeMessage(errMsg);
@@ -406,6 +432,7 @@ int main() {
         Message outMsg;
         outMsg.protocol = PROTOCOL_VERSION;
         outMsg.from = myUsername;
+        outMsg.session_id = mySessionID; // Identity injected
 
         if (input.substr(0, 6) == "/file ") {
             size_t targetStart = input.find('@');
@@ -480,6 +507,7 @@ int main() {
                         chunkMsg.payload = PayloadType::FILE_CHUNK;
                         chunkMsg.from = myUsername;
                         chunkMsg.to = target;
+                        chunkMsg.session_id = mySessionID;
                         chunkMsg.body = SerializeFileChunk(chunk);
 
                         string chunk_packet = SerializeMessage(chunkMsg);

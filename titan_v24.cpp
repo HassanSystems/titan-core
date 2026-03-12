@@ -292,95 +292,52 @@ struct Action {
     string content; 
 };
 
-vector<Action> parse_actions(const string &response) {
+struct AgentResponse {
+    string plan;
     vector<Action> actions;
-    size_t pos = 0;
+    string result;
+    string error;
+};
 
-    while (pos < response.size()) {
-        size_t action_start = response.find("ACTION:", pos);
-        if (action_start == string::npos) break;
+AgentResponse parse_agent_response(const string &response) {
+    AgentResponse ar;
+    try {
+        size_t start = response.find('{');
+        size_t end = response.find_last_of('}');
+        if (start == string::npos || end == string::npos || start > end) {
+            ar.error = "FATAL: Output is not a JSON object.";
+            return ar;
+        }
+        
+        string clean_json = response.substr(start, end - start + 1);
+        json j = json::parse(clean_json);
+        
+        if (!j.contains("api_version") || j["api_version"] != "v1") {
+            ar.error = "Missing or invalid api_version. Must be 'v1'.";
+            return ar;
+        }
 
-        action_start += 7; 
-        while (action_start < response.size() && (response[action_start] == ' ' || response[action_start] == '\t')) action_start++;
-        if (action_start >= response.size()) break;
-
-        string remaining = response.substr(action_start);
-        Action act;
-
-        size_t end_of_type = remaining.find_first_of(" :\n\r");
-        string raw_type = remaining.substr(0, end_of_type);
-        raw_type.erase(remove(raw_type.begin(), raw_type.end(), ' '), raw_type.end());
-
-        if (raw_type == "WRITE") {
-            act.type = "WRITE";
-            size_t colon_pos = remaining.find(':');
-            if (colon_pos == string::npos) { pos = action_start + 5; continue; }
-            
-            size_t end_of_target = remaining.find_first_of("\n\r<", colon_pos);
-            if (end_of_target == string::npos) end_of_target = remaining.size();
-            act.target = remaining.substr(colon_pos + 1, end_of_target - colon_pos - 1);
-            act.target.erase(0, act.target.find_first_not_of(" \t\r\n"));
-            act.target.erase(act.target.find_last_not_of(" \t\r\n") + 1);
-
-            size_t code_open = remaining.find("<<<CODE");
-            size_t code_close = remaining.find("CODE>>>");
-            size_t close_tag_length = 7;
-
-            if (code_close == string::npos && code_open != string::npos) {
-                code_close = remaining.find(">>>", code_open + 7);
-                close_tag_length = 3;
-            }
-
-            if (code_open != string::npos && code_close != string::npos && code_close > code_open) {
-                size_t content_start = code_open + 7;
-                act.content = remaining.substr(content_start, code_close - content_start);
-                act.content.erase(0, act.content.find_first_not_of("\r\n"));
-                act.content.erase(act.content.find_last_not_of("\r\n") + 1);
-                pos = action_start + code_close + close_tag_length;
-                actions.push_back(act);
-            } else {
-                act.type = "PARSE_ERROR";
-                act.target = "Missing or malformed block. You MUST open with <<<CODE and close with CODE>>>. Try again.";
-                pos = action_start + end_of_target;
-                actions.push_back(act);
+        if (j.contains("plan") && j["plan"].is_string()) ar.plan = j["plan"];
+        if (j.contains("result") && j["result"].is_string()) ar.result = j["result"];
+        
+        if (j.contains("actions") && j["actions"].is_array()) {
+            for (const auto& item : j["actions"]) {
+                Action act;
+                if (item.contains("type") && item["type"].is_string()) act.type = item["type"];
+                if (item.contains("target") && item["target"].is_string()) act.target = item["target"];
+                if (item.contains("content") && item["content"].is_string()) act.content = item["content"];
+                ar.actions.push_back(act);
             }
         }
-        else if (raw_type == "CMD" || raw_type == "LIST" || raw_type == "READ" || raw_type == "TYPE" || raw_type == "CLICK" || raw_type == "SYS" || raw_type == "SPEAK" || raw_type == "SEARCH") {
-            act.type = raw_type; 
-            
-            size_t start_of_target = remaining.find_first_of(":") + 1;
-            size_t end_of_target = remaining.find_first_of("\n\r");
-            if (end_of_target == string::npos) end_of_target = remaining.size();
-
-            act.target = remaining.substr(start_of_target, end_of_target - start_of_target);
-            act.target.erase(0, act.target.find_first_not_of(" \t\r"));
-            act.target.erase(act.target.find_last_not_of(" \t\r") + 1);
-            
-            size_t hash_pos = act.target.find('#');
-            if(hash_pos != string::npos) {
-                 act.target = act.target.substr(0, hash_pos);
-                 act.target.erase(act.target.find_last_not_of(" \t") + 1);
-            }
-            pos = action_start + end_of_target;
-            actions.push_back(act);
-        }
-        else if (raw_type == "WATCH") {
-            act.type = "WATCH";
-            pos = action_start + 5;
-            actions.push_back(act);
-        } else {
-            size_t next_line = remaining.find('\n');
-            pos = (next_line != string::npos) ? action_start + next_line : response.size();
-        }
+    } catch (const exception &e) {
+        ar.error = string("JSON Parse Exception: ") + e.what();
     }
-    return actions;
+    return ar;
 }
 
 string execute_action(const Action &act) {
     if (act.type == "WRITE") {
         return write_file(act.target, act.content) ? "SUCCESS: Wrote " + act.target : "FAILED: Could not write " + act.target;
-    } else if (act.type == "PARSE_ERROR") {
-        return "ERROR: " + act.target;
     } else if (act.type == "CMD") {
         return run_command_capture(act.target);
     } else if (act.type == "LIST") {
@@ -442,36 +399,21 @@ string build_system_prompt() {
     return R"(You are Titan V24, an autonomous AI agent integrated into a multiplayer chat network.
 
 RULES:
-1. You are an autonomous agent. If you need information or need to affect the system, use an ACTION.
-2. If you use an ACTION, STOP typing immediately after it. The system will provide an OBSERVATION.
-3. NEVER use CMD:curl to search the web. You MUST use the built-in SEARCH:<query> action.
-4. SEARCH QUERIES MUST BE SIMPLE. Do NOT use quotation marks.
-5. NEVER fabricate an OBSERVATION yourself. Wait for the system to provide it.
-6. NEVER lock, shutdown, or restart the PC unless the user EXPLICITLY asks you to.
-7. When using the WRITE action, you MUST wrap the file content exactly inside <<<CODE and CODE>>> tags.
-8. You will receive [RECENT CHAT HISTORY IN THIS ROOM]. Use this ONLY for context to understand the user's current request. Do not reply to old messages.
-9. Once you have finished your task, output your final answer to the user starting with RESULT:
-
-FORMAT:
-PLAN: [Reasoning for what to do next based on chat context]
-ACTION: [ActionType]:[Target]
-(Stop here and wait for system to provide OBSERVATION)
-RESULT: [Your final answer to the user]
-
-ACTIONS:
-- WRITE:<filename>
-<<<CODE
-[Code here]
-CODE>>>
-- CMD:<shell command>
-- LIST:<relative_path>
-- READ:<filename>
-- WATCH (Takes a screenshot and reads text via OCR)
-- SPEAK:<text>
-- SYS:LOCK
-- CLICK:x,y
-- TYPE:text
-- SEARCH:<query>
+1. You MUST respond ONLY with a perfectly formatted JSON object. Do not wrap the JSON in markdown code blocks.
+2. Your JSON MUST strictly follow this exact schema:
+{
+    "api_version": "v1",
+    "plan": "[Your reasoning based on chat context]",
+    "actions": [
+        {"type": "[ActionType]", "target": "[Target]", "content": "[Content if needed]"}
+    ],
+    "result": "[Final answer to the user. Leave empty if you are taking actions first.]"
+}
+3. Allowed ActionTypes: WRITE, CMD, LIST, READ, WATCH, SPEAK, SYS, CLICK, TYPE, SEARCH.
+4. For the WRITE action, put the file path in "target" and the file contents directly in "content".
+5. For the SEARCH action, put the query in "target" (NO quotes).
+6. NEVER fabricate an OBSERVATION. Output your actions, and wait for the system to reply with the results.
+7. If you have finished the task, populate the "result" string and leave "actions" empty.
 )";
 }   
 
@@ -480,16 +422,16 @@ string call_llm(httplib::Client &cli, const string &full_prompt) {
         {"model", "qwen2.5-coder:7b"}, 
         {"prompt", full_prompt},
         {"stream", false},
+        {"format", "json"}, 
         {"options", {
-            {"stop", {"OBSERVATION:", "OBSERVATION"}},
-            {"temperature", 0.4},        
+            {"temperature", 0.1},        
             {"repeat_penalty", 1.1},     
             {"num_predict", 1024},
             {"num_ctx", 8192} 
         }}
     };
 
-    cout << ">> [THINKING]..." << endl;
+    cout << ">> [THINKING in JSON]..." << endl;
     auto res = cli.Post("/api/generate", req.dump(), "application/json");
 
     if (res && res->status == 200) {
@@ -613,7 +555,6 @@ int main() {
 
     thread listener(NetworkListener, titanSocket);
 
-    // Block until auth finishes
     while (mySessionID == 0 && titan_running) {
         this_thread::sleep_for(chrono::milliseconds(50));
     }
@@ -629,7 +570,7 @@ int main() {
     cli.set_read_timeout(LLM_TIMEOUT_SEC);
 
     cout << "\n=== TITAN V24 NETWORK AGENT ONLINE ===\n";
-    cout << ">> Architecture: Asynchronous Network Node + ReAct Loop\n";
+    cout << ">> Architecture: JSON API Validation + ReAct Loop\n";
     cout << ">> Listening for commands on network...\n";
 
     while (titan_running) {
@@ -660,7 +601,7 @@ int main() {
             "\nUser Request Payload:\n" + user_input;
 
         int agent_turn = 0;
-        string final_result = "Task completed, but I didn't generate a text response."; 
+        string final_result = "Task completed, but I didn't generate a final text response."; 
         
         while (agent_turn < MAX_AGENT_TURNS) {
             auto llm_start = chrono::steady_clock::now();
@@ -674,46 +615,39 @@ int main() {
                 break;
             }
 
-            cout << "\n>> [TITAN]:\n" << answer << endl;
+            cout << "\n>> [TITAN RAW JSON]:\n" << answer << endl;
 
-            vector<Action> actions = parse_actions(answer);
-            
-            if (actions.empty()) {
-                size_t result_pos = answer.find("RESULT:");
-                
-                if (result_pos != string::npos) {
-                    final_result = answer.substr(result_pos + 7);
-                    final_result.erase(0, final_result.find_first_not_of(" \t\r\n")); 
-                    append_memory("TITAN: " + final_result);
-                    break; 
-                } else {
-                    cout << ">> [SYSTEM WARNING]: Qwen dropped format. Forcing correction." << endl;
-                    session_context += "\n" + answer + "\nOBSERVATION: ERROR - You must output either an ACTION: or a RESULT:. Try again.\n";
-                    agent_turn++;
-                    continue; 
-                }
+            AgentResponse ar = parse_agent_response(answer);
+
+            if (!ar.error.empty()) {
+                cout << ">> [SYSTEM WARNING]: Schema Validation Failed. Forcing correction.\n>> Reason: " << ar.error << endl;
+                session_context += "\n" + answer + "\nOBSERVATION: ERROR - Schema validation failed. " + ar.error + "\nYou MUST output strictly valid JSON conforming to the schema.\n";
+                agent_turn++;
+                continue; 
+            }
+
+            if (!ar.result.empty()) {
+                final_result = ar.result;
+                append_memory("TITAN: " + final_result);
+                break; 
             }
 
             string combined_observations = "";
 
-            for (size_t i = 0; i < actions.size(); i++) {
-                cout << "\n>> Action " << (i + 1) << "/" << actions.size() << ": " << actions[i].type;
-                if (!actions[i].target.empty() && actions[i].type != "WATCH") cout << " -> " << actions[i].target;
+            for (size_t i = 0; i < ar.actions.size(); i++) {
+                cout << "\n>> Action " << (i + 1) << "/" << ar.actions.size() << ": " << ar.actions[i].type;
+                if (!ar.actions[i].target.empty() && ar.actions[i].type != "WATCH") cout << " -> " << ar.actions[i].target;
                 cout << endl;
 
                 auto act_start = chrono::steady_clock::now();
-                string result = execute_action(actions[i]);
+                string result = execute_action(ar.actions[i]);
                 auto act_end = chrono::steady_clock::now();
-                perf_logger.log_metric("EXECUTE_" + actions[i].type, chrono::duration_cast<chrono::microseconds>(act_end - act_start).count());
+                perf_logger.log_metric("EXECUTE_" + ar.actions[i].type, chrono::duration_cast<chrono::microseconds>(act_end - act_start).count());
 
-                combined_observations += "\nOBSERVATION:\n" + result + "\n";
+                combined_observations += "\nOBSERVATION for " + ar.actions[i].type + ":\n" + result + "\n";
             }
 
-            if (combined_observations.find("SUCCESS") != string::npos) {
-                session_context += "\n" + answer + combined_observations + "\nAction successful. You MUST output RESULT: now to finish the task.\n";
-            } else {
-                session_context += "\n" + answer + combined_observations + "\nNext PLAN or RESULT:\n";
-            }
+            session_context += "\n" + answer + "\n" + combined_observations + "\nProvide next PLAN/ACTION or final RESULT.\n";
             agent_turn++;
             
             if (agent_turn >= MAX_AGENT_TURNS) {
@@ -731,7 +665,7 @@ int main() {
         reply_msg.payload = PayloadType::TEXT;
         reply_msg.from = "titan";
         reply_msg.to = sender;
-        reply_msg.session_id = mySessionID; // Identity injected
+        reply_msg.session_id = mySessionID; 
         reply_msg.body = final_result;
 
         string reply_packet = SerializeMessage(reply_msg);

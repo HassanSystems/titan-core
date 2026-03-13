@@ -33,6 +33,7 @@ namespace fs = std::filesystem;
 const string WORKSPACE_ROOT = "C:\\TitanWorkspace";
 const string MEMORY_FILE = "titan_memory.txt";
 const string ACTION_LOG_FILE = "titan_actions.log";
+const string SECURITY_LOG_FILE = "titan_security.log";
 const string VOICE_INPUT_FILE = "titan_voice_input.txt";
 const string TESSERACT_PATH = R"(C:\Program Files\Tesseract-OCR\tesseract.exe)";
 
@@ -112,6 +113,14 @@ void log_action(const string &action_type, const string &details) {
     string time_str = ctime(&now);
     if (!time_str.empty()) time_str.pop_back();
     if (f.is_open()) f << "[" << time_str << "] [" << action_type << "] " << details << endl;
+}
+
+void log_security_violation(const string &violation_type, const string &details) {
+    ofstream f(SECURITY_LOG_FILE, ios::app);
+    time_t now = time(0);
+    string time_str = ctime(&now);
+    if (!time_str.empty()) time_str.pop_back();
+    if (f.is_open()) f << "[" << time_str << "] [VIOLATION:" << violation_type << "] " << details << endl;
 }
 
 bool is_safe_path(const string &input_path) {
@@ -335,6 +344,21 @@ AgentResponse parse_agent_response(const string &response) {
     return ar;
 }
 
+string validate_action(const Action &act) {
+    if (act.type == "WRITE" && (act.target.empty() || act.content.empty())) return "WRITE requires both 'target' and 'content'.";
+    if ((act.type == "CMD" || act.type == "READ" || act.type == "TYPE" || act.type == "SEARCH" || act.type == "SYS" || act.type == "SPEAK") && act.target.empty()) return act.type + " requires a 'target'.";
+    if (act.type == "CLICK" && act.target.find(',') == string::npos) return "CLICK requires coordinates in 'x,y' format.";
+    if (act.type != "WRITE" && act.type != "CMD" && act.type != "LIST" && act.type != "READ" && act.type != "TYPE" && act.type != "CLICK" && act.type != "WATCH" && act.type != "SYS" && act.type != "SEARCH" && act.type != "SPEAK") return "Unknown action type: " + act.type;
+    return "";
+}
+
+bool is_valid_result(const string &result, string &reason) {
+    if (result.find("{\"") != string::npos || result.find("\"}") != string::npos) { reason = "Leaked JSON format"; return false; }
+    if (result.find("<<<CODE") != string::npos) { reason = "Leaked internal code block tags"; return false; }
+    if (result.find("CMD:") != string::npos || result.find("WRITE:") != string::npos || result.find("SEARCH:") != string::npos) { reason = "Leaked raw action commands"; return false; }
+    return true;
+}
+
 string execute_action(const Action &act) {
     if (act.type == "WRITE") {
         return write_file(act.target, act.content) ? "SUCCESS: Wrote " + act.target : "FAILED: Could not write " + act.target;
@@ -427,7 +451,7 @@ string call_llm(httplib::Client &cli, const string &full_prompt) {
             {"temperature", 0.1},        
             {"repeat_penalty", 1.1},     
             {"num_predict", 1024},
-            {"num_ctx", 8192} 
+           {"num_ctx", 4096}
         }}
     };
 
@@ -627,6 +651,15 @@ int main() {
             }
 
             if (!ar.result.empty()) {
+                string reject_reason;
+                if (!is_valid_result(ar.result, reject_reason)) {
+                    log_security_violation("RESULT_FORMAT", "Reason: " + reject_reason + " | Result: " + ar.result);
+                    cout << ">> [SECURITY] Blocked invalid result format: " << reject_reason << endl;
+                    session_context += "\n" + answer + "\nOBSERVATION: ERROR - Your 'result' field violated safety rules: " + reject_reason + ". Do not leak JSON, system tags, or raw tool calls to the user. Rewrite the result naturally.\n";
+                    agent_turn++;
+                    continue;
+                }
+
                 final_result = ar.result;
                 append_memory("TITAN: " + final_result);
                 break; 
@@ -635,16 +668,24 @@ int main() {
             string combined_observations = "";
 
             for (size_t i = 0; i < ar.actions.size(); i++) {
-                cout << "\n>> Action " << (i + 1) << "/" << ar.actions.size() << ": " << ar.actions[i].type;
-                if (!ar.actions[i].target.empty() && ar.actions[i].type != "WATCH") cout << " -> " << ar.actions[i].target;
+                Action &act = ar.actions[i];
+                cout << "\n>> Action " << (i + 1) << "/" << ar.actions.size() << ": " << act.type;
+                if (!act.target.empty() && act.type != "WATCH") cout << " -> " << act.target;
                 cout << endl;
 
-                auto act_start = chrono::steady_clock::now();
-                string result = execute_action(ar.actions[i]);
-                auto act_end = chrono::steady_clock::now();
-                perf_logger.log_metric("EXECUTE_" + ar.actions[i].type, chrono::duration_cast<chrono::microseconds>(act_end - act_start).count());
+                string validation_err = validate_action(act);
+                if (!validation_err.empty()) {
+                    log_security_violation("MALFORMED_ACTION", validation_err + " | Action: " + act.type);
+                    combined_observations += "\nOBSERVATION for " + act.type + ":\nERROR: " + validation_err + "\n";
+                    continue; 
+                }
 
-                combined_observations += "\nOBSERVATION for " + ar.actions[i].type + ":\n" + result + "\n";
+                auto act_start = chrono::steady_clock::now();
+                string result = execute_action(act);
+                auto act_end = chrono::steady_clock::now();
+                perf_logger.log_metric("EXECUTE_" + act.type, chrono::duration_cast<chrono::microseconds>(act_end - act_start).count());
+
+                combined_observations += "\nOBSERVATION for " + act.type + ":\n" + result + "\n";
             }
 
             session_context += "\n" + answer + "\n" + combined_observations + "\nProvide next PLAN/ACTION or final RESULT.\n";

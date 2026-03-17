@@ -1,3 +1,11 @@
+/*
+ * TITAN NETWORK SERVER - DAY 62: BACKPRESSURE & TRAFFIC CONTROL
+ * 1. GLOBAL LIMITS: Caps max concurrent users to prevent resource exhaustion.
+ * 2. PER-CLIENT RATE LIMITING: Drops packets exceeding MAX_MSGS_PER_SEC to 
+ * prevent queue flooding and network stall.
+ * 3. PRESSURE LOGGING: Identifies and logs abusive connections.
+ */
+
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
 #include <winsock2.h>
@@ -9,12 +17,16 @@
 #include <fstream>
 #include <deque>
 #include <random>
+#include <chrono>
 
 #pragma comment(lib, "ws2_32.lib")
 
 #include "protocol.h" 
 
 using namespace std;
+
+const size_t MAX_CONCURRENT_USERS = 50; 
+const int MAX_MSGS_PER_SEC = 5;         
 
 struct Session {
     uint64_t session_id;
@@ -135,9 +147,25 @@ void ClientHandler(SOCKET clientSocket) {
                 username = join_msg.from;
                 
                 map_lock.lock();
+                if (active_users.size() >= MAX_CONCURRENT_USERS) {
+                    map_lock.unlock();
+                    cout << ">> [BACKPRESSURE] Server full. Dropped connection from: " << username << endl;
+                    
+                    Message rej;
+                    rej.protocol = PROTOCOL_VERSION;
+                    rej.payload = PayloadType::SESSION_REJECT;
+                    rej.from = "Server";
+                    rej.to = username;
+                    rej.session_id = 0;
+                    rej.body = "Server at maximum capacity. Try again later.";
+                    string pckt = SerializeMessage(rej);
+                    send(clientSocket, pckt.c_str(), pckt.length(), 0);
+                    closesocket(clientSocket);
+                    return; 
+                }
+
                 if (active_users.count(username)) {
                     map_lock.unlock();
-                    
                     cout << ">> [REJECTED] Duplicate login attempt for: " << username << endl;
                     
                     Message rej;
@@ -147,7 +175,6 @@ void ClientHandler(SOCKET clientSocket) {
                     rej.to = username;
                     rej.session_id = 0;
                     rej.body = "Username already active on the network.";
-                    
                     string pckt = SerializeMessage(rej);
                     send(clientSocket, pckt.c_str(), pckt.length(), 0);
                     closesocket(clientSocket);
@@ -174,6 +201,9 @@ void ClientHandler(SOCKET clientSocket) {
             }
         }
     }
+
+    int msg_count = 0;
+    auto window_start = chrono::steady_clock::now();
 
     while (true) {
         memset(buffer, 0, 4096);
@@ -203,6 +233,31 @@ void ClientHandler(SOCKET clientSocket) {
             Message parsed_msg = ParseMessage(raw_data);
             
             if (parsed_msg.protocol == PROTOCOL_VERSION) {
+                
+                auto now = chrono::steady_clock::now();
+                if (chrono::duration_cast<chrono::seconds>(now - window_start).count() >= 1) {
+                    msg_count = 0;
+                    window_start = now;
+                }
+                msg_count++;
+
+                if (msg_count > MAX_MSGS_PER_SEC) {
+                    cout << ">> [PRESSURE POINT] Traffic limit exceeded by " << username << ". Packet dropped." << endl;
+                    LogMessage("[PRESSURE POINT] Traffic limit exceeded by " + username);
+                    
+                    Message warn;
+                    warn.protocol = PROTOCOL_VERSION;
+                    warn.payload = PayloadType::SYSTEM;
+                    warn.from = "Server";
+                    warn.to = username;
+                    warn.session_id = current_session_id;
+                    warn.body = "SYSTEM: You are sending messages too fast. Packet dropped.";
+                    string warn_pckt = SerializeMessage(warn);
+                    send(clientSocket, warn_pckt.c_str(), warn_pckt.length(), 0);
+                    
+                    continue; 
+                }
+
                 bool is_valid = false;
                 map_lock.lock();
                 if (active_users.count(username) && 
@@ -238,6 +293,7 @@ int main() {
     listen(serverSocket, SOMAXCONN);
 
     cout << "=== TITAN NETWORK SERVER | PROTOCOL V1 ===" << endl;
+    cout << ">> Backpressure Limits Active: Max 5 msg/sec per client." << endl;
     cout << ">> Listening on Port 8080...\n" << endl;
     
     while (true) {

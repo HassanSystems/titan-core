@@ -12,6 +12,8 @@
 #include <ctime>
 #include <memory>
 #include <cstdint>
+#include <mutex>
+#include <system_error>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -23,7 +25,7 @@ namespace fs = std::filesystem;
 
 bool isRunning = true;
 string myUsername = "";
-uint64_t mySessionID = 0; // DAY 57: Real Identity
+uint64_t mySessionID = 0; 
 
 const string b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 string base64_encode(const char* buf, unsigned int bufLen) {
@@ -93,6 +95,44 @@ map<string, string> transfer_filenames;
 map<string, bool> window_acks;
 map<string, bool> aborted_transfers;
 map<string, string> transfer_senders;
+map<string, chrono::steady_clock::time_point> last_activity;
+mutex transfer_mutex;
+
+void TimeoutReaper() {
+    while (isRunning) {
+        this_thread::sleep_for(chrono::seconds(5));
+        lock_guard<mutex> lock(transfer_mutex);
+        auto now = chrono::steady_clock::now();
+        
+        for (auto it = active_streams.begin(); it != active_streams.end(); ) {
+            string t_id = it->first;
+            if (chrono::duration_cast<chrono::seconds>(now - last_activity[t_id]).count() > 15) {
+                cout << "\n>> [REAPER] Zombie transfer killed (Timeout). ID: " << t_id << "\n> " << flush;
+                
+                it->second->close();
+                it->second.reset(); 
+                
+                error_code ec; 
+                if (fs::exists(transfer_filenames[t_id], ec)) {
+                    fs::remove(transfer_filenames[t_id], ec);
+                    if (ec) cout << ">> [SYSTEM WARNING] Could not delete corrupted file (OS Lock): " << ec.message() << endl;
+                }
+                
+                expected_hashes.erase(t_id);
+                expected_chunk_index.erase(t_id);
+                transfer_filenames.erase(t_id);
+                window_acks.erase(t_id);
+                transfer_senders.erase(t_id);
+                aborted_transfers[t_id] = true;
+                last_activity.erase(t_id);
+                
+                it = active_streams.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
 
 void ReceiveHandler(SOCKET clientSocket) {
     char buffer[4096];
@@ -152,7 +192,12 @@ void ReceiveHandler(SOCKET clientSocket) {
                     transfer_senders[transfer_id] = msg.from;
 
                     expected_chunk_index[transfer_id] = 0;
-                    active_streams[transfer_id] = make_shared<ofstream>(filename, ios::binary | ios::trunc);
+                    
+                    {
+                        lock_guard<mutex> lock(transfer_mutex);
+                        active_streams[transfer_id] = make_shared<ofstream>(filename, ios::binary | ios::trunc);
+                        last_activity[transfer_id] = chrono::steady_clock::now();
+                    }
 
                     cout << "[META from " << msg.from << "] ID: " << transfer_id << " | File: " << filename << "\n> " << flush;
                 } catch(...) {}
@@ -183,12 +228,15 @@ void ReceiveHandler(SOCKET clientSocket) {
 
                     cout << "\n[NETWORK ERROR] Transfer " << transfer_id << " failed! Code: " << code << " - " << message << "\n> " << flush;
 
+                    lock_guard<mutex> lock(transfer_mutex);
                     aborted_transfers[transfer_id] = true; 
 
                     if (active_streams.count(transfer_id)) {
                         active_streams[transfer_id]->close();
+                        active_streams[transfer_id].reset();
+                        error_code ec;
+                        fs::remove(transfer_filenames[transfer_id], ec);
                         active_streams.erase(transfer_id);
-                        fs::remove(transfer_filenames[transfer_id]);
                     }
 
                     expected_hashes.erase(transfer_id);
@@ -196,6 +244,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                     transfer_filenames.erase(transfer_id);
                     window_acks.erase(transfer_id);
                     transfer_senders.erase(transfer_id);
+                    last_activity.erase(transfer_id);
                 } catch(...) {}
             }
             else if (msg.payload == PayloadType::FILE_CHUNK) {
@@ -204,6 +253,11 @@ void ReceiveHandler(SOCKET clientSocket) {
                     size_t tid_s = b.find("\"transfer_id\":\"") + 15;
                     size_t tid_e = b.find("\"", tid_s);
                     string transfer_id = b.substr(tid_s, tid_e - tid_s);
+                    
+                    {
+                        lock_guard<mutex> lock(transfer_mutex);
+                        last_activity[transfer_id] = chrono::steady_clock::now();
+                    }
                     
                     size_t idx_s = b.find("\"index\":") + 8;
                     size_t idx_e = b.find(",", idx_s);
@@ -226,16 +280,20 @@ void ReceiveHandler(SOCKET clientSocket) {
                         string err_packet = SerializeMessage(errMsg);
                         send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
 
+                        lock_guard<mutex> lock(transfer_mutex);
                         if (active_streams.count(transfer_id)) {
                             active_streams[transfer_id]->close();
+                            active_streams[transfer_id].reset();
+                            error_code ec;
+                            fs::remove(transfer_filenames[transfer_id], ec);
                             active_streams.erase(transfer_id);
-                            fs::remove(transfer_filenames[transfer_id]);
                         }
                         expected_hashes.erase(transfer_id);
                         expected_chunk_index.erase(transfer_id);
                         transfer_filenames.erase(transfer_id);
                         window_acks.erase(transfer_id);
                         transfer_senders.erase(transfer_id);
+                        last_activity.erase(transfer_id);
                         continue;
                     }
 
@@ -247,8 +305,11 @@ void ReceiveHandler(SOCKET clientSocket) {
                     size_t d_e = b.find("\"}", d_s);
                     string data_b64 = b.substr(d_s, d_e - d_s);
 
-                    if (active_streams.count(transfer_id)) {
-                        *active_streams[transfer_id] << base64_decode(data_b64);
+                    {
+                        lock_guard<mutex> lock(transfer_mutex);
+                        if (active_streams.count(transfer_id)) {
+                            *active_streams[transfer_id] << base64_decode(data_b64);
+                        }
                     }
 
                     expected_chunk_index[transfer_id]++;
@@ -271,9 +332,12 @@ void ReceiveHandler(SOCKET clientSocket) {
                     if (expected_chunk_index[transfer_id] == total_chunks) {
                         string filename = transfer_filenames[transfer_id];
 
-                        if (active_streams.count(transfer_id)) {
-                            active_streams[transfer_id]->close();
-                            active_streams.erase(transfer_id);
+                        {
+                            lock_guard<mutex> lock(transfer_mutex);
+                            if (active_streams.count(transfer_id)) {
+                                active_streams[transfer_id]->close();
+                                active_streams.erase(transfer_id);
+                            }
                         }
                         
                         string computed_hash = ComputeFileHash(filename);
@@ -281,7 +345,8 @@ void ReceiveHandler(SOCKET clientSocket) {
                             cout << "[FILE] Streamed & Verified (" << transfer_id << "): " << filename << "\n> " << flush;
                         } else {
                             cout << "[ERROR] CORRUPT TRANSFER! Hash mismatch for " << filename << ". Deleting.\n> " << flush;
-                            fs::remove(filename); 
+                            error_code ec;
+                            fs::remove(filename, ec); 
 
                             FileError err;
                             err.transfer_id = transfer_id;
@@ -298,12 +363,14 @@ void ReceiveHandler(SOCKET clientSocket) {
                             send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
                         }
 
+                        lock_guard<mutex> lock(transfer_mutex);
                         expected_hashes.erase(transfer_id);
                         expected_chunk_index.erase(transfer_id);
                         transfer_filenames.erase(transfer_id);
                         window_acks.erase(transfer_id);
                         transfer_senders.erase(transfer_id);
                         aborted_transfers.erase(transfer_id);
+                        last_activity.erase(transfer_id);
                     }
                 } catch (...) {
                     cout << "[ERROR] Corrupt file chunk dropped.\n> " << flush;
@@ -359,7 +426,7 @@ int main() {
     join_msg.payload = PayloadType::SYSTEM;
     join_msg.from = myUsername;
     join_msg.to = "server";
-    join_msg.session_id = 0; // Pre-auth
+    join_msg.session_id = 0; 
     join_msg.body = "JOIN";
 
     string join_packet = SerializeMessage(join_msg);
@@ -368,7 +435,9 @@ int main() {
     thread receiver(ReceiveHandler, clientSocket);
     receiver.detach(); 
 
-    // Block until auth finishes
+    thread reaper(TimeoutReaper);
+    reaper.detach();
+
     while (mySessionID == 0 && isRunning) {
         this_thread::sleep_for(chrono::milliseconds(50));
     }
@@ -410,12 +479,15 @@ int main() {
                 send(clientSocket, err_packet.c_str(), err_packet.length(), 0);
             }
 
+            lock_guard<mutex> lock(transfer_mutex);
             if (active_streams.count(transfer_id)) {
                 active_streams[transfer_id]->close();
-                active_streams.erase(transfer_id);
-                if (fs::exists(transfer_filenames[transfer_id])) {
-                    fs::remove(transfer_filenames[transfer_id]);
+                active_streams[transfer_id].reset();
+                error_code ec;
+                if (fs::exists(transfer_filenames[transfer_id], ec)) {
+                    fs::remove(transfer_filenames[transfer_id], ec);
                 }
+                active_streams.erase(transfer_id);
             }
 
             expected_hashes.erase(transfer_id);
@@ -423,6 +495,7 @@ int main() {
             transfer_filenames.erase(transfer_id);
             window_acks.erase(transfer_id);
             transfer_senders.erase(transfer_id);
+            last_activity.erase(transfer_id);
             aborted_transfers[transfer_id] = true;
             
             cout << "[SYSTEM] Aborted transfer and purged disk for ID: " << transfer_id << endl;
@@ -432,7 +505,7 @@ int main() {
         Message outMsg;
         outMsg.protocol = PROTOCOL_VERSION;
         outMsg.from = myUsername;
-        outMsg.session_id = mySessionID; // Identity injected
+        outMsg.session_id = mySessionID; 
 
         if (input.substr(0, 6) == "/file ") {
             size_t targetStart = input.find('@');
@@ -511,6 +584,12 @@ int main() {
                         chunkMsg.body = SerializeFileChunk(chunk);
 
                         string chunk_packet = SerializeMessage(chunkMsg);
+
+                        if (rand() % 3 == 0) {
+                            cout << ">> [CHAOS] File chunk " << chunk.index << " dropped intentionally." << endl;
+                            continue; 
+                        }
+
                         send(clientSocket, chunk_packet.c_str(), chunk_packet.length(), 0);
                         
                         this_thread::sleep_for(chrono::milliseconds(2)); 
@@ -552,6 +631,12 @@ int main() {
         }
 
         string packet = SerializeMessage(outMsg);
+
+        if (rand() % 3 == 0) {
+            cout << ">> [CHAOS] Message packet dropped intentionally." << endl;
+            continue; 
+        }
+
         send(clientSocket, packet.c_str(), packet.length(), 0);
     }
 

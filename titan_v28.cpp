@@ -63,6 +63,10 @@ condition_variable queue_cv;
 atomic<bool> titan_running{true};
 uint64_t mySessionID = 0;
 
+string GenerateMessageID() {
+    return to_string(time(0)) + "-" + to_string(rand() % 100000);
+}
+
 class TelemetryLogger {
 private:
     std::ofstream log_file;
@@ -586,6 +590,22 @@ void NetworkListener(SOCKET titanSocket) {
                 }
                 
                 else if (msg.payload == PayloadType::COMMAND && msg.to == "titan") {
+                    
+                    // ---> ARQ FIX: SEND ACK IMMEDIATELY TO STOP CLIENT RETRIES <---
+                    Message ackMsg;
+                    ackMsg.protocol = PROTOCOL_VERSION;
+                    ackMsg.message_id = GenerateMessageID();
+                    ackMsg.payload = PayloadType::MESSAGE_ACK;
+                    ackMsg.from = "titan";
+                    ackMsg.to = msg.from;
+                    ackMsg.session_id = mySessionID;
+                    MsgAck m_ack;
+                    m_ack.message_id = msg.message_id; 
+                    ackMsg.body = SerializeMsgAck(m_ack);
+                    
+                    string ack_packet = SerializeMessage(ackMsg);
+                    send(titanSocket, ack_packet.c_str(), ack_packet.length(), 0);
+
                     auto now = chrono::steady_clock::now();
                     if (user_cooldowns.count(msg.from)) {
                         auto seconds_passed = chrono::duration_cast<chrono::seconds>(now - user_cooldowns[msg.from]).count();
@@ -595,6 +615,7 @@ void NetworkListener(SOCKET titanSocket) {
                             
                             Message reply_msg;
                             reply_msg.protocol = PROTOCOL_VERSION;
+                            reply_msg.message_id = GenerateMessageID();
                             reply_msg.payload = PayloadType::TEXT;
                             reply_msg.from = "titan";
                             reply_msg.to = msg.from;
@@ -630,6 +651,7 @@ void NetworkListener(SOCKET titanSocket) {
 }
 
 int main() {
+    srand(static_cast<unsigned int>(time(0))); 
     SetConsoleOutputCP(CP_UTF8);
     
     if (sqlite3_open("titan.db", &db_connection)) {
@@ -666,6 +688,7 @@ int main() {
 
     Message join_msg;
     join_msg.protocol = PROTOCOL_VERSION;
+    join_msg.message_id = GenerateMessageID();
     join_msg.payload = PayloadType::SYSTEM;
     join_msg.from = "titan";
     join_msg.to = "server";
@@ -808,6 +831,7 @@ int main() {
 
         Message reply_msg;
         reply_msg.protocol = PROTOCOL_VERSION;
+        reply_msg.message_id = GenerateMessageID();
         reply_msg.payload = PayloadType::TEXT;
         reply_msg.from = "titan";
         reply_msg.to = sender;

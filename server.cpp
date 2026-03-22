@@ -1,11 +1,3 @@
-/*
- * TITAN NETWORK SERVER - DAY 62: BACKPRESSURE & TRAFFIC CONTROL
- * 1. GLOBAL LIMITS: Caps max concurrent users to prevent resource exhaustion.
- * 2. PER-CLIENT RATE LIMITING: Drops packets exceeding MAX_MSGS_PER_SEC to 
- * prevent queue flooding and network stall.
- * 3. PRESSURE LOGGING: Identifies and logs abusive connections.
- */
-
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
 #include <winsock2.h>
@@ -80,7 +72,7 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
     }
 
     if (msg.to == "ALL") {
-        if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK) {
+        if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK && msg.payload != PayloadType::MESSAGE_ACK) {
             cout << ">> [PUBLIC] " << msg.from << ": " << msg.body << endl;
             LogMessage("[PUBLIC] " + msg.from + ": " + msg.body);
 
@@ -95,7 +87,7 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
         BroadcastPublic(msg, senderSocket);
     } 
     else { 
-        if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK) {
+        if (msg.payload != PayloadType::FILE_META && msg.payload != PayloadType::FILE_CHUNK && msg.payload != PayloadType::MESSAGE_ACK) {
             cout << ">> [PRIVATE] " << msg.from << " -> " << msg.to << endl;
             LogMessage("[PRIVATE] " + msg.from + " -> " + msg.to + ": " + msg.body);
         }
@@ -114,6 +106,7 @@ void RouteMessage(Message msg, SOCKET senderSocket) {
         } else {
             Message err;
             err.protocol = PROTOCOL_VERSION;
+            err.message_id = "SYS";
             err.payload = PayloadType::SYSTEM;
             err.from = "Server";
             err.to = msg.from;
@@ -153,6 +146,7 @@ void ClientHandler(SOCKET clientSocket) {
                     
                     Message rej;
                     rej.protocol = PROTOCOL_VERSION;
+                    rej.message_id = "SYS";
                     rej.payload = PayloadType::SESSION_REJECT;
                     rej.from = "Server";
                     rej.to = username;
@@ -170,6 +164,7 @@ void ClientHandler(SOCKET clientSocket) {
                     
                     Message rej;
                     rej.protocol = PROTOCOL_VERSION;
+                    rej.message_id = "SYS";
                     rej.payload = PayloadType::SESSION_REJECT;
                     rej.from = "Server";
                     rej.to = username;
@@ -190,6 +185,7 @@ void ClientHandler(SOCKET clientSocket) {
                 
                 Message acc;
                 acc.protocol = PROTOCOL_VERSION;
+                acc.message_id = "SYS";
                 acc.payload = PayloadType::SESSION_ACCEPT;
                 acc.from = "Server";
                 acc.to = username;
@@ -247,6 +243,7 @@ void ClientHandler(SOCKET clientSocket) {
                     
                     Message warn;
                     warn.protocol = PROTOCOL_VERSION;
+                    warn.message_id = "SYS";
                     warn.payload = PayloadType::SYSTEM;
                     warn.from = "Server";
                     warn.to = username;

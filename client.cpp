@@ -13,7 +13,7 @@
 #include <memory>
 #include <cstdint>
 #include <mutex>
-#include <system_error>
+#include <chrono>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -88,6 +88,10 @@ void LogMessage(const string& text) {
     if (logf) logf << text << "\n";
 }
 
+string GenerateMessageID() {
+    return to_string(time(0)) + "-" + to_string(rand() % 100000);
+}
+
 map<string, shared_ptr<ofstream>> active_streams;
 map<string, string> expected_hashes; 
 map<string, uint64_t> expected_chunk_index; 
@@ -97,6 +101,40 @@ map<string, bool> aborted_transfers;
 map<string, string> transfer_senders;
 map<string, chrono::steady_clock::time_point> last_activity;
 mutex transfer_mutex;
+
+struct PendingMessage {
+    Message msg;
+    int retries;
+    chrono::steady_clock::time_point last_sent;
+};
+map<string, PendingMessage> unacked_messages;
+mutex arq_mutex;
+
+void ARQWorker(SOCKET clientSocket) {
+    while (isRunning) {
+        this_thread::sleep_for(chrono::milliseconds(500));
+        lock_guard<mutex> lock(arq_mutex);
+        auto now = chrono::steady_clock::now();
+        
+        for (auto it = unacked_messages.begin(); it != unacked_messages.end(); ) {
+            if (chrono::duration_cast<chrono::seconds>(now - it->second.last_sent).count() >= 2) {
+                if (it->second.retries < 3) {
+                    it->second.retries++;
+                    it->second.last_sent = now;
+                    string packet = SerializeMessage(it->second.msg);
+                    send(clientSocket, packet.c_str(), packet.length(), 0);
+                    LogMessage("[ARQ] Retrying message ID: " + it->first + " (Attempt " + to_string(it->second.retries) + ")");
+                    ++it;
+                } else {
+                    cout << "\n>> [NETWORK ERROR] Message to " << it->second.msg.to << " failed to deliver (Timeout).\n> " << flush;
+                    it = unacked_messages.erase(it);
+                }
+            } else {
+                ++it;
+            }
+        }
+    }
+}
 
 void TimeoutReaper() {
     while (isRunning) {
@@ -174,6 +212,18 @@ void ReceiveHandler(SOCKET clientSocket) {
             else if (msg.payload == PayloadType::SYSTEM) {
                 cout << "[SYSTEM]: " << msg.body << "\n> " << flush;
             } 
+            else if (msg.payload == PayloadType::MESSAGE_ACK) {
+                try {
+                    size_t id_s = msg.body.find("\"message_id\":\"") + 14;
+                    size_t id_e = msg.body.find("\"", id_s);
+                    string ack_id = msg.body.substr(id_s, id_e - id_s);
+                    
+                    lock_guard<mutex> lock(arq_mutex);
+                    if (unacked_messages.count(ack_id)) {
+                        unacked_messages.erase(ack_id);
+                    }
+                } catch(...) {}
+            }
             else if (msg.payload == PayloadType::FILE_META) {
                 try {
                     string b = msg.body;
@@ -272,6 +322,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                         err.message = "Chunk sequence mismatch. Expected " + to_string(expected_chunk_index[transfer_id]);
                         Message errMsg;
                         errMsg.protocol = PROTOCOL_VERSION;
+                        errMsg.message_id = GenerateMessageID();
                         errMsg.payload = PayloadType::FILE_ERROR;
                         errMsg.from = myUsername;
                         errMsg.to = transfer_senders[transfer_id];
@@ -319,6 +370,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                         ack.transfer_id = transfer_id;
                         Message ackMsg;
                         ackMsg.protocol = PROTOCOL_VERSION;
+                        ackMsg.message_id = GenerateMessageID();
                         ackMsg.payload = PayloadType::FILE_ACK;
                         ackMsg.from = myUsername;
                         ackMsg.to = msg.from;
@@ -354,6 +406,7 @@ void ReceiveHandler(SOCKET clientSocket) {
                             err.message = "Hash mismatch during final verification.";
                             Message errMsg;
                             errMsg.protocol = PROTOCOL_VERSION;
+                            errMsg.message_id = GenerateMessageID();
                             errMsg.payload = PayloadType::FILE_ERROR;
                             errMsg.from = myUsername;
                             errMsg.to = msg.from;
@@ -423,6 +476,7 @@ int main() {
     
     Message join_msg;
     join_msg.protocol = PROTOCOL_VERSION;
+    join_msg.message_id = "SYS_JOIN";
     join_msg.payload = PayloadType::SYSTEM;
     join_msg.from = myUsername;
     join_msg.to = "server";
@@ -437,6 +491,9 @@ int main() {
 
     thread reaper(TimeoutReaper);
     reaper.detach();
+
+    thread arq(ARQWorker, clientSocket);
+    arq.detach();
 
     while (mySessionID == 0 && isRunning) {
         this_thread::sleep_for(chrono::milliseconds(50));
@@ -469,6 +526,7 @@ int main() {
                 err.message = "Receiver explicitly aborted the transfer.";
                 Message errMsg;
                 errMsg.protocol = PROTOCOL_VERSION;
+                errMsg.message_id = GenerateMessageID();
                 errMsg.payload = PayloadType::FILE_ERROR;
                 errMsg.from = myUsername;
                 errMsg.to = transfer_senders[transfer_id];
@@ -504,6 +562,7 @@ int main() {
 
         Message outMsg;
         outMsg.protocol = PROTOCOL_VERSION;
+        outMsg.message_id = GenerateMessageID();
         outMsg.from = myUsername;
         outMsg.session_id = mySessionID; 
 
@@ -577,6 +636,7 @@ int main() {
 
                         Message chunkMsg;
                         chunkMsg.protocol = PROTOCOL_VERSION;
+                        chunkMsg.message_id = GenerateMessageID();
                         chunkMsg.payload = PayloadType::FILE_CHUNK;
                         chunkMsg.from = myUsername;
                         chunkMsg.to = target;
@@ -584,12 +644,6 @@ int main() {
                         chunkMsg.body = SerializeFileChunk(chunk);
 
                         string chunk_packet = SerializeMessage(chunkMsg);
-
-                        if (rand() % 3 == 0) {
-                            cout << ">> [CHAOS] File chunk " << chunk.index << " dropped intentionally." << endl;
-                            continue; 
-                        }
-
                         send(clientSocket, chunk_packet.c_str(), chunk_packet.length(), 0);
                         
                         this_thread::sleep_for(chrono::milliseconds(2)); 
@@ -631,10 +685,11 @@ int main() {
         }
 
         string packet = SerializeMessage(outMsg);
-
-        if (rand() % 3 == 0) {
-            cout << ">> [CHAOS] Message packet dropped intentionally." << endl;
-            continue; 
+        
+        // Add to ARQ buffer before sending (Private messages only to avoid ALL broadcast chaos)
+        if (outMsg.to != "ALL" && (outMsg.payload == PayloadType::TEXT || outMsg.payload == PayloadType::COMMAND)) {
+            lock_guard<mutex> lock(arq_mutex);
+            unacked_messages[outMsg.message_id] = {outMsg, 0, chrono::steady_clock::now()};
         }
 
         send(clientSocket, packet.c_str(), packet.length(), 0);

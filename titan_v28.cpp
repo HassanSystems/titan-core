@@ -515,6 +515,7 @@ RULES:
 5. For the SEARCH action, put the query in "target" (NO quotes).
 6. NEVER fabricate an OBSERVATION. Output your actions, and wait for the system to reply with the results.
 7. If you have finished the task, populate the "result" string and leave "actions" empty.
+8. If a user shares a file, you MUST immediately populate the "result" field to acknowledge receipt of the metadata (name, size) and leave "actions" empty. DO NOT use the READ action unless explicitly ordered.
 )";
 }   
 
@@ -583,7 +584,35 @@ void NetworkListener(SOCKET titanSocket) {
                 }
                 
                 if (msg.payload == PayloadType::FILE_CHUNK) continue;
-                if (msg.payload == PayloadType::FILE_META) continue; 
+                
+                if (msg.payload == PayloadType::FILE_META) {
+                    try {
+                        string b = msg.body;
+                        size_t fn_s = b.find("\"filename\":\"") + 12;
+                        size_t fn_e = b.find("\"", fn_s);
+                        string filename = b.substr(fn_s, fn_e - fn_s);
+
+                        size_t sz_s = b.find("\"size_bytes\":") + 13;
+                        size_t sz_e = b.find(",", sz_s);
+                        string size = b.substr(sz_s, sz_e - sz_s);
+
+                        string memory_entry = "[SYSTEM] @" + msg.from + " initiated file transfer: " + filename + " (" + size + " bytes).";
+                        append_memory(memory_entry);
+
+                        if (msg.to == "titan" || msg.to == "ALL") {
+                            Message trigger_msg = msg;
+                            trigger_msg.payload = PayloadType::COMMAND;
+                            trigger_msg.body = "I just sent a file: " + filename + " (" + size + " bytes). Acknowledge you see it, but do not read it.";
+                            
+                            unique_lock<mutex> lock(queue_mutex);
+                            QueuedCommand qc = {trigger_msg, chrono::steady_clock::now()};
+                            command_queue.push(qc);
+                            lock.unlock();
+                            queue_cv.notify_one();
+                        }
+                    } catch(...) {}
+                    continue;
+                }
 
                 if (msg.payload == PayloadType::TEXT && msg.to == "ALL") {
                     append_memory("[PUBLIC] " + msg.from + ": " + msg.body);
@@ -591,7 +620,6 @@ void NetworkListener(SOCKET titanSocket) {
                 
                 else if (msg.payload == PayloadType::COMMAND && msg.to == "titan") {
                     
-                    // ---> ARQ FIX: SEND ACK IMMEDIATELY TO STOP CLIENT RETRIES <---
                     Message ackMsg;
                     ackMsg.protocol = PROTOCOL_VERSION;
                     ackMsg.message_id = GenerateMessageID();
@@ -773,6 +801,13 @@ int main() {
                 session_context += "\n" + answer + "\nOBSERVATION: ERROR - Schema validation failed. " + ar.error + "\nYou MUST output strictly valid JSON conforming to the schema.\n";
                 agent_turn++;
                 continue; 
+            }
+
+            if (ar.actions.empty() && ar.result.empty()) {
+                cout << ">> [SYSTEM WARNING]: Agent paralysis detected. Forcing correction." << endl;
+                session_context += "\n" + answer + "\nOBSERVATION: ERROR - You provided no actions and an empty result. You MUST either take an action or provide a final text 'result' to the user.\n";
+                agent_turn++;
+                continue;
             }
 
             if (!ar.result.empty()) {

@@ -230,29 +230,31 @@ void ClientHandler(SOCKET clientSocket) {
             
             if (parsed_msg.protocol == PROTOCOL_VERSION) {
                 
-                auto now = chrono::steady_clock::now();
-                if (chrono::duration_cast<chrono::seconds>(now - window_start).count() >= 1) {
-                    msg_count = 0;
-                    window_start = now;
-                }
-                msg_count++;
+                if (parsed_msg.payload == PayloadType::TEXT || parsed_msg.payload == PayloadType::COMMAND) {
+                    auto now = chrono::steady_clock::now();
+                    if (chrono::duration_cast<chrono::seconds>(now - window_start).count() >= 1) {
+                        msg_count = 0;
+                        window_start = now;
+                    }
+                    msg_count++;
 
-                if (msg_count > MAX_MSGS_PER_SEC) {
-                    cout << ">> [PRESSURE POINT] Traffic limit exceeded by " << username << ". Packet dropped." << endl;
-                    LogMessage("[PRESSURE POINT] Traffic limit exceeded by " + username);
-                    
-                    Message warn;
-                    warn.protocol = PROTOCOL_VERSION;
-                    warn.message_id = "SYS";
-                    warn.payload = PayloadType::SYSTEM;
-                    warn.from = "Server";
-                    warn.to = username;
-                    warn.session_id = current_session_id;
-                    warn.body = "SYSTEM: You are sending messages too fast. Packet dropped.";
-                    string warn_pckt = SerializeMessage(warn);
-                    send(clientSocket, warn_pckt.c_str(), warn_pckt.length(), 0);
-                    
-                    continue; 
+                    if (msg_count > MAX_MSGS_PER_SEC) {
+                        cout << ">> [PRESSURE POINT] Traffic limit exceeded by " << username << ". Packet dropped." << endl;
+                        LogMessage("[PRESSURE POINT] Traffic limit exceeded by " + username);
+                        
+                        Message warn;
+                        warn.protocol = PROTOCOL_VERSION;
+                        warn.message_id = "SYS";
+                        warn.payload = PayloadType::SYSTEM;
+                        warn.from = "Server";
+                        warn.to = username;
+                        warn.session_id = current_session_id;
+                        warn.body = "SYSTEM: You are sending messages too fast. Packet dropped.";
+                        string warn_pckt = SerializeMessage(warn);
+                        send(clientSocket, warn_pckt.c_str(), warn_pckt.length(), 0);
+                        
+                        continue; 
+                    }
                 }
 
                 bool is_valid = false;

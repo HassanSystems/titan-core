@@ -131,6 +131,20 @@ void log_security_violation(const string &violation_type, const string &details)
     if (f.is_open()) f << "[" << time_str << "] [VIOLATION:" << violation_type << "] " << details << endl;
 }
 
+void log_audit_db(const string& sender, const string& prompt, const string& action_type, const string& target, const string& result) {
+    const char* sql = "INSERT INTO AuditLog (sender, prompt, action_type, target, result) VALUES (?, ?, ?, ?, ?);";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_connection, sql, -1, &stmt, 0) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, sender.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, prompt.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, action_type.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 4, target.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 5, result.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+}
+
 bool is_safe_path(const string &input_path) {
     try {
         fs::path p = fs::absolute(input_path);
@@ -512,10 +526,11 @@ RULES:
 }
 3. Allowed ActionTypes: WRITE, CMD, LIST, READ, WATCH, SPEAK, SYS, CLICK, TYPE, SEARCH.
 4. For the WRITE action, put the file path in "target" and the file contents directly in "content".
-5. For the SEARCH action, put the query in "target" (NO quotes).
-6. NEVER fabricate an OBSERVATION. Output your actions, and wait for the system to reply with the results.
-7. If you have finished the task, populate the "result" string and leave "actions" empty.
-8. If a user shares a file, you MUST immediately populate the "result" field to acknowledge receipt of the metadata (name, size) and leave "actions" empty. DO NOT use the READ action unless explicitly ordered.
+5. For CMD, put the EXACT terminal command in "target". DO NOT use CMD to 'echo' messages to the user.
+6. To speak or reply to the user, you MUST put your message in the "result" string and leave "actions" empty.
+7. NEVER fabricate an OBSERVATION. Output your actions, and wait for the system to reply with the results.
+8. If you have finished the task, populate the "result" string and leave "actions" empty.
+9. If a user shares a file, you MUST immediately populate the "result" field to acknowledge receipt of the metadata (name, size) and leave "actions" empty. DO NOT use the READ action unless explicitly ordered.
 )";
 }   
 
@@ -693,6 +708,9 @@ int main() {
     const char* sql_traits = "CREATE TABLE IF NOT EXISTS UserTraits (trait_key TEXT PRIMARY KEY, trait_val TEXT);";
     sqlite3_exec(db_connection, sql_traits, 0, 0, 0);
 
+    const char* sql_audit = "CREATE TABLE IF NOT EXISTS AuditLog (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, sender TEXT, prompt TEXT, action_type TEXT, target TEXT, result TEXT);";
+    sqlite3_exec(db_connection, sql_audit, 0, 0, 0);
+
     if (!fs::exists(WORKSPACE_ROOT)) {
         fs::create_directories(WORKSPACE_ROOT);
         cout << ">> [INIT]: Created Workspace at " << WORKSPACE_ROOT << endl;
@@ -844,6 +862,8 @@ int main() {
                 string result = execute_action(act);
                 auto act_end = chrono::steady_clock::now();
                 perf_logger.log_metric("EXECUTE_" + act.type, chrono::duration_cast<chrono::microseconds>(act_end - act_start).count());
+                
+                log_audit_db(sender, user_input, act.type, act.target, result);
 
                 combined_observations += "\nOBSERVATION for " + act.type + ":\n" + result + "\n";
             }

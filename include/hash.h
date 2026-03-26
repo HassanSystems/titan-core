@@ -1,3 +1,4 @@
+/* [Titan Core] Component: hash.h | Role: Cryptographic hashing utilities for verifying packet and data integrity. */
 #pragma once
 #include <string>
 #include <fstream>

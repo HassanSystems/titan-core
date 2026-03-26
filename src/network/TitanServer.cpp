@@ -1,3 +1,4 @@
+/* [Titan Core] Component: TitanServer.cpp | Role: TCP server handling incoming P2P connections and routing messages. */
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
 #include <winsock2.h>

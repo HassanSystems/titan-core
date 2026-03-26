@@ -1,3 +1,4 @@
+/* [Titan Core] Component: json.hpp | Role: External library for JSON parsing and serialization. */
 //     __ _____ _____ _____
 //  __|  |   __|     |   | |  JSON for Modern C++
 // |  |  |__   |  |  | | | |  version 3.12.0

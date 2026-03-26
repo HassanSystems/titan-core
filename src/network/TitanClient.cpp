@@ -1,3 +1,4 @@
+/* [Titan Core] Component: TitanClient.cpp | Role: TCP client for outward P2P connections and message dispatch. */
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <iostream>
 #include <winsock2.h>

@@ -1,3 +1,4 @@
+/* [Titan Core] Component: httplib.h | Role: External library for HTTP and REST API communications. */
 //
 //  httplib.h
 //

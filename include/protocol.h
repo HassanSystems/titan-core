@@ -1,3 +1,4 @@
+/* [Titan Core] Component: protocol.h | Role: Defines the packet structures and messaging standard for the Titan network. */
 #pragma once
 #include <string>
 #include <cstdint>

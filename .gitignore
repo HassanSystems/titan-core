@@ -1,4 +1,6 @@
 *.exe
-*.log
-*.txt
-*.mkv
+*.o
+*.dll
+*.def
+build/
+.vscode/

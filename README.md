@@ -17,7 +17,7 @@ Titan Core uses CMake to ensure cross-platform compatibility across Windows, Lin
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/HassanSystems/titan-core.git
+git clone [https://github.com/HassanSystems/titan-core.git](https://github.com/HassanSystems/titan-core.git)
 cd titan-core
 
 # 2. Generate build files
@@ -29,16 +29,13 @@ cmake --build .
 ```
 (Executables will be generated in the build/ directory: TitanServer, TitanClient, and TitanAgent).
 
-Architecture
-Local-First P2P: Asynchronous C++ sockets for zero-latency terminal messaging.
+## 🏗️ Architecture
+**Local-First P2P**: Asynchronous C++ sockets for zero-latency terminal messaging.
 
-Hybrid AI Core: Integrated LLM execution with strict context-bounding and pre-execution firewall validation.
+**Hybrid AI Core**: Integrated LLM execution with strict context-bounding and pre-execution firewall validation.
 
-Roadmap
-Phase 1: Core Socket Messaging & Local Agent Execution
-
-Phase 2: OpenSSL Integration for E2EE
-
-Phase 3: Multi-Agent Cloud Orchestration (Claude API)
-
-Phase 4: Decentralized Server/Guild Architecture
+## 🗺️ Roadmap
+- **Phase 1**: Core Socket Messaging & Local Agent Execution
+- **Phase 2**: OpenSSL Integration for E2EE
+- **Phase 3**: Multi-Agent Cloud Orchestration (Claude API)
+- **Phase 4**: Decentralized Server/Guild Architecture
